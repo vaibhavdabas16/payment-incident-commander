@@ -1,0 +1,94 @@
+# Merchant intervention policy.
+#
+# This document is the merchant's standing grant of authority to the agent. It is data, not code:
+# a merchant can tighten these limits without anyone touching the system, and every field here is
+# enforced by `pic/policies/gateway.py`, which contains no model of any kind (ADR-002).
+#
+# Outcomes, from most to least restrictive:
+#   DENY               - refused outright
+#   REQUIRE_APPROVAL   - a human must approve before execution
+#   APPROVE_WITH_CLAMP - permitted, but a parameter is reduced to the limit
+#   APPROVE            - permitted as requested
+
+merchant_id: merch_acme
+policy_version: 3
+updated_at: "2026-08-24"
+
+# Actions this merchant permits at all. Anything absent is denied outright.
+allowed_actions:
+  - shift_traffic
+  - disable_payment_method
+  - configure_retry
+  - rollback_change
+  - set_monitoring_frequency
+  - notify_merchant
+  - create_incident_ticket
+  - no_action
+
+# Actions the agent may execute without a human. Everything else in `allowed_actions` is
+# permitted but requires approval first.
+autonomous_actions:
+  - shift_traffic
+  - configure_retry
+  - set_monitoring_frequency
+  - notify_merchant
+  - create_incident_ticket
+  - no_action
+
+# Actions that cannot be undone by replaying an inverse. Always escalated to a human, regardless
+# of confidence or expected value.
+irreversible_actions:
+  - rollback_change
+  - disable_payment_method
+
+# Numeric ceilings. Exceeding one clamps the parameter rather than refusing the action, so a
+# slightly over-ambitious proposal still produces a safe intervention.
+bounds:
+  # Percentage points of total traffic that may be moved in a single intervention.
+  max_traffic_shift_pct: 20
+  # Cumulative shift away from any one route while an incident is open.
+  max_cumulative_traffic_shift_pct: 35
+  max_retries: 3
+  min_monitoring_interval_seconds: 30
+  max_monitoring_interval_seconds: 600
+
+thresholds:
+  # Above this much revenue at risk, a human signs off even on an otherwise autonomous action.
+  # Large blast radius deserves a human regardless of how confident the agent is.
+  human_approval_revenue_at_risk_paise: 1500000000  # INR 1.5 crore/hour
+  # Root-cause confidence floor for acting without a human.
+  min_confidence_for_autonomous_action: 0.70
+  # Detection confidence floor for acting at all.
+  min_detection_confidence: 0.60
+  # An intervention whose expected value is not clearly positive is not worth its risk.
+  min_expected_value_paise: 0
+  # Risk score above which approval is required even when everything else passes.
+  max_autonomous_risk_score: 0.60
+
+rate_limits:
+  # Caps how many autonomous interventions can fire in an hour, so a misbehaving agent cannot
+  # thrash a live payment system.
+  max_autonomous_actions_per_hour: 4
+  # After a failed intervention, wait before trying another autonomous action on this incident.
+  cooloff_after_failed_intervention_seconds: 300
+  # Interventions are temporary by construction; beyond this they need a human decision.
+  max_intervention_duration_seconds: 3600
+  # Attempts per incident before the system stops trying and escalates.
+  max_intervention_attempts: 2
+
+# Routes the agent may move traffic toward. A route absent here is not a valid destination even
+# if the agent believes it is healthy.
+routing:
+  eligible_routes:
+    - route_A
+    - route_B
+    - route_C
+  # Never move traffic onto a route whose recent success rate is below this.
+  min_destination_success_rate: 0.80
+
+notifications:
+  escalation_channel: merchant
+  always_notify_on:
+    - ESCALATED
+    - REGRESSED
+    - rollback_failed

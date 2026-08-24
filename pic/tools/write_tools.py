@@ -1,0 +1,290 @@
+"""Write tools — the only code in the system with side effects.
+
+Each mutates the payment control plane and returns both a result and an explicit `inverse_action`
+describing exactly how to undo it. Rollback then replays a recorded inverse rather than trying to
+reconstruct prior state from memory, which is what makes recovery from a failed intervention
+reliable rather than best-effort.
+
+The registry refuses to invoke any of these without an approved `PolicyDecision` (ADR-002), so the
+approval check is structural rather than a convention these functions are trusted to follow.
+
+**Adapter boundary.** These currently drive the local simulator's control plane. In a deployment
+they would call Razorpay routing/config APIs; the signatures and the audit record are the contract,
+and `adapter` records which backend actually executed. Nothing above this layer changes.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from .registry import ToolContext, ToolSpec
+
+ADAPTER = "simulator"
+
+
+def _require_control(ctx: ToolContext) -> Any:
+    if ctx.control is None:
+        raise RuntimeError("no control plane bound to this tool context")
+    return ctx.control
+
+
+def shift_traffic(
+    ctx: ToolContext,
+    from_route: str,
+    to_route: str,
+    percentage: float,
+    payment_method: str | None = None,
+) -> dict[str, Any]:
+    """Move a share of traffic from one route to another."""
+    control = _require_control(ctx)
+    if from_route == to_route:
+        raise ValueError("from_route and to_route must differ")
+    if percentage <= 0:
+        raise ValueError("percentage must be positive")
+    detail = control.shift_traffic(from_route, to_route, percentage, payment_method)
+    return {
+        "adapter": ADAPTER,
+        "detail": detail,
+        "inverse_action": {
+            "tool": "shift_traffic",
+            "arguments": {
+                "from_route": to_route,
+                "to_route": from_route,
+                # Undo exactly what moved, which may be less than requested if the source route
+                # did not carry the full amount.
+                "percentage": detail["effective_share_moved"] * 100,
+                "payment_method": payment_method,
+            },
+        },
+    }
+
+
+def disable_payment_method(ctx: ToolContext, payment_method: str) -> dict[str, Any]:
+    """Temporarily stop offering a payment method so customers fall back to a working one."""
+    control = _require_control(ctx)
+    detail = control.disable_method(payment_method)
+    return {
+        "adapter": ADAPTER,
+        "detail": detail,
+        "inverse_action": {
+            "tool": "enable_payment_method",
+            "arguments": {"payment_method": payment_method},
+        },
+    }
+
+
+def enable_payment_method(ctx: ToolContext, payment_method: str) -> dict[str, Any]:
+    control = _require_control(ctx)
+    detail = control.enable_method(payment_method)
+    return {
+        "adapter": ADAPTER,
+        "detail": detail,
+        "inverse_action": {
+            "tool": "disable_payment_method",
+            "arguments": {"payment_method": payment_method},
+        },
+    }
+
+
+def configure_retry(ctx: ToolContext, max_retries: int, enabled: bool = True) -> dict[str, Any]:
+    """Change retry policy for failed payments."""
+    control = _require_control(ctx)
+    detail = control.configure_retry(max_retries, enabled)
+    return {
+        "adapter": ADAPTER,
+        "detail": detail,
+        "inverse_action": {
+            "tool": "configure_retry",
+            "arguments": {
+                "max_retries": detail["before"]["max_retries"],
+                "enabled": detail["before"]["retry_enabled"],
+            },
+        },
+    }
+
+
+def rollback_change(ctx: ToolContext, change_id: str) -> dict[str, Any]:
+    """Revert a merchant configuration change identified during investigation.
+
+    Modelled rather than simulated end-to-end: the simulator has no notion of un-deploying an SDK,
+    so this records the intent and notifies the owning team. Marked `partial_effect` so the
+    Verification Agent does not expect a full recovery and wrongly conclude the action failed.
+    """
+    changes = {c.change_id: c for c in ctx.store.config_changes(
+        ctx.now.replace(year=ctx.now.year - 1), ctx.now
+    )}
+    change = changes.get(change_id)
+    if change is None:
+        raise ValueError(f"unknown change_id {change_id!r}")
+    if not change.reversible:
+        raise ValueError(f"change {change_id!r} is not reversible")
+    ctx.notifications.append(
+        {
+            "channel": "deploy",
+            "subject": f"Rollback requested for {change.component}",
+            "body": change.description,
+            "at": ctx.now.isoformat(),
+        }
+    )
+    return {
+        "adapter": ADAPTER,
+        "detail": {
+            "change_id": change_id,
+            "component": change.component,
+            "rollback_requested": True,
+            "partial_effect": True,
+            "note": "Rollback dispatched to the owning team; recovery depends on redeploy time.",
+        },
+        "inverse_action": None,
+    }
+
+
+def set_monitoring_frequency(ctx: ToolContext, interval_seconds: int) -> dict[str, Any]:
+    """Raise or lower observation cadence. Always safe and always reversible."""
+    control = _require_control(ctx)
+    before = control.monitoring_interval_s
+    control.monitoring_interval_s = interval_seconds
+    return {
+        "adapter": ADAPTER,
+        "detail": {"before_seconds": before, "after_seconds": interval_seconds},
+        "inverse_action": {
+            "tool": "set_monitoring_frequency",
+            "arguments": {"interval_seconds": before},
+        },
+    }
+
+
+def notify_merchant(
+    ctx: ToolContext, subject: str, body: str, urgency: str = "normal"
+) -> dict[str, Any]:
+    """Tell the merchant something they must act on themselves."""
+    note = {
+        "channel": "merchant",
+        "subject": subject,
+        "body": body,
+        "urgency": urgency,
+        "at": ctx.now.isoformat(),
+        "incident_id": ctx.incident_id,
+    }
+    ctx.notifications.append(note)
+    return {"adapter": ADAPTER, "detail": note, "inverse_action": None}
+
+
+def create_incident_ticket(
+    ctx: ToolContext, title: str, description: str, severity: str = "HIGH"
+) -> dict[str, Any]:
+    ticket = {
+        "ticket_id": f"TCK-{len(ctx.tickets) + 1:04d}",
+        "incident_id": ctx.incident_id,
+        "title": title,
+        "description": description,
+        "severity": severity,
+        "created_at": ctx.now.isoformat(),
+    }
+    ctx.tickets.append(ticket)
+    return {"adapter": ADAPTER, "detail": ticket, "inverse_action": None}
+
+
+SPECS = [
+    ToolSpec(
+        name="shift_traffic",
+        description=(
+            "Move a percentage of payment traffic from one route to another. Reversible. "
+            "Only helps when an alternative route is healthy."
+        ),
+        parameters={
+            "from_route": {"type": "string", "required": True},
+            "to_route": {"type": "string", "required": True},
+            "percentage": {
+                "type": "number",
+                "required": True,
+                "description": "Percentage points of total traffic to move.",
+            },
+            "payment_method": {
+                "type": "string",
+                "description": "Restrict the shift to one payment method.",
+            },
+        },
+        func=shift_traffic,
+        write=True,
+        inverse="shift_traffic",
+    ),
+    ToolSpec(
+        name="disable_payment_method",
+        description=(
+            "Stop offering a payment method so customers fall back to a working one. Reversible, "
+            "but visibly changes checkout, so it is a heavier intervention than rerouting."
+        ),
+        parameters={"payment_method": {"type": "string", "required": True}},
+        func=disable_payment_method,
+        write=True,
+        inverse="enable_payment_method",
+    ),
+    ToolSpec(
+        name="enable_payment_method",
+        description="Re-enable a previously disabled payment method.",
+        parameters={"payment_method": {"type": "string", "required": True}},
+        func=enable_payment_method,
+        write=True,
+        inverse="disable_payment_method",
+    ),
+    ToolSpec(
+        name="configure_retry",
+        description=(
+            "Change the retry policy for failed payments. Useful for transient timeout errors, "
+            "useless for hard declines, and it increases load on an already degraded provider."
+        ),
+        parameters={
+            "max_retries": {"type": "integer", "required": True},
+            "enabled": {"type": "boolean"},
+        },
+        func=configure_retry,
+        write=True,
+        inverse="configure_retry",
+    ),
+    ToolSpec(
+        name="rollback_change",
+        description=(
+            "Request rollback of a merchant configuration change. The correct action when a "
+            "config change immediately precedes the degradation."
+        ),
+        parameters={"change_id": {"type": "string", "required": True}},
+        func=rollback_change,
+        write=True,
+        inverse=None,
+    ),
+    ToolSpec(
+        name="set_monitoring_frequency",
+        description="Change how often the system evaluates payment health. Always safe.",
+        parameters={"interval_seconds": {"type": "integer", "required": True}},
+        func=set_monitoring_frequency,
+        write=True,
+        inverse="set_monitoring_frequency",
+    ),
+    ToolSpec(
+        name="notify_merchant",
+        description=(
+            "Alert the merchant about something only they can fix, such as an issuer-side outage."
+        ),
+        parameters={
+            "subject": {"type": "string", "required": True},
+            "body": {"type": "string", "required": True},
+            "urgency": {"type": "string"},
+        },
+        func=notify_merchant,
+        write=True,
+        inverse=None,
+    ),
+    ToolSpec(
+        name="create_incident_ticket",
+        description="Open a tracked ticket for human follow-up.",
+        parameters={
+            "title": {"type": "string", "required": True},
+            "description": {"type": "string", "required": True},
+            "severity": {"type": "string"},
+        },
+        func=create_incident_ticket,
+        write=True,
+        inverse=None,
+    ),
+]
