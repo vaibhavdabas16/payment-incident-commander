@@ -108,6 +108,9 @@ class PaymentEvent(BaseModel):
     retry_count: int = 0
     is_retry: bool = False
     route_id: str
+    # Derived at generation time so order-value-specific failures are sliceable like any other
+    # dimension. The spec calls these out explicitly and they are invisible without it.
+    amount_band: str = "mid"
 
     @field_validator("amount_paise")
     @classmethod
@@ -156,6 +159,10 @@ class SegmentStat(BaseModel):
     success_rate: float
     baseline_success_rate: float | None = None
     deviation: float | None = None
+    # Baseline counts, kept so a segment drop can be significance-tested rather than eyeballed.
+    baseline_total: int = 0
+    baseline_successes: int = 0
+    p_value: float = 1.0
     # Share of all failures in the window that fall in this segment.
     failure_share: float = 0.0
     # Share of all traffic in the window that this segment represents.

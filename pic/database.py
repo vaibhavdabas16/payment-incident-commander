@@ -70,6 +70,7 @@ class PaymentEventRow(Base):
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
     is_retry: Mapped[bool] = mapped_column(Boolean, default=False)
     route_id: Mapped[str] = mapped_column(String(32))
+    amount_band: Mapped[str] = mapped_column(String(8), default="mid")
 
 
 Index("ix_events_ts", PaymentEventRow.timestamp)

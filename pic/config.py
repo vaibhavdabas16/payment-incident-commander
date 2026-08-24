@@ -41,8 +41,42 @@ class DetectionConfig:
     severity_bands: tuple[float, float, float] = (0.05, 0.10, 0.18)
     # Segment attribution.
     min_segment_volume: int = 15
+    # Joint slices need more volume before they are trustworthy.
+    min_cross_segment_volume: int = 30
     min_segment_failure_share: float = 0.25
-    max_segments_reported: int = 6
+    max_segments_reported: int = 5
+    # A segment must fall at least this fraction as far as the worst-hit one to be reported,
+    # which filters correlated echoes (device=mobile when UPI degrades).
+    echo_floor_ratio: float = 0.45
+
+    # --- Segment-level detection: catches incidents the headline rate hides ---
+    # Minimum volume in the current window before a segment can open an incident on its own.
+    min_segment_detection_volume: int = 60
+    # Minimum absolute drop against the segment's own baseline.
+    min_segment_drop: float = 0.12
+    # Two-proportion test threshold. Tighter than the usual 0.05 because many segments are tested
+    # each cycle and we would otherwise open incidents on multiple-comparison artefacts.
+    segment_significance_level: float = 0.001
+    # A segment-only anomaly must put at least this much revenue per hour at risk to be promoted
+    # to an incident (INR 50,000/hour).
+    min_segment_revenue_at_risk_paise: int = 50_000 * 100
+    # Second detection tier: a longer window buys statistical power for narrow segments
+    # (one payment method in two states) at the cost of detection latency.
+    slow_window_seconds: int = 600
+    slow_baseline_seconds: int = 1800
+    # The slow tier leans on the significance test rather than raw volume, so a small but badly
+    # broken segment (high-value cards) is still catchable. p < 0.001 is what keeps this honest.
+    min_slow_segment_volume: int = 30
+
+    # --- Revenue-at-risk estimation over a disjoint (payment_method, amount_band) partition ---
+    min_stratum_volume: int = 20
+    # Lenient on purpose: a stratum only needs to be plausibly degraded to contribute value, and
+    # the significance gate exists to stop one-sided noise accumulating across many strata.
+    stratum_significance_level: float = 0.10
+
+    # --- Severity banding on money, alongside the deviation bands above ---
+    high_revenue_at_risk_paise: int = 5_00_000 * 100  # INR 5L/hour
+    critical_revenue_at_risk_paise: int = 15_00_000 * 100  # INR 15L/hour
 
 
 @dataclass

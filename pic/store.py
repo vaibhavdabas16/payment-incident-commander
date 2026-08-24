@@ -22,6 +22,10 @@ def _epoch(ts: datetime) -> float:
     return ts.timestamp()
 
 
+def _matches(event: PaymentEvent, segment: Segment) -> bool:
+    return all(str(getattr(event, k, None)) == v for k, v in segment.dimensions.items())
+
+
 def wilson_lower_bound(successes: int, total: int, z: float = 1.96) -> float:
     """Lower bound of the Wilson score interval.
 
@@ -184,6 +188,7 @@ class EventStore:
             buckets[str(value)].append(e)
 
         baseline_rate: dict[str, float] = {}
+        baseline_counts: dict[str, tuple[int, int]] = {}
         if baseline_start and baseline_end:
             base_rows = self.slice(baseline_start, baseline_end)
             base_buckets: dict[str, list[PaymentEvent]] = defaultdict(list)
@@ -194,7 +199,9 @@ class EventStore:
                 base_buckets[str(value)].append(e)
             for value, items in base_buckets.items():
                 if items:
-                    baseline_rate[value] = sum(1 for i in items if i.status == "success") / len(items)
+                    ok = sum(1 for i in items if i.status == "success")
+                    baseline_rate[value] = ok / len(items)
+                    baseline_counts[value] = (len(items), ok)
 
         stats: list[SegmentStat] = []
         for value, items in buckets.items():
@@ -205,9 +212,12 @@ class EventStore:
             failures = total - successes
             rate = successes / total
             base = baseline_rate.get(value)
+            b_total, b_ok = baseline_counts.get(value, (0, 0))
             stats.append(
                 SegmentStat(
                     segment=Segment(dimensions={dimension: value}),
+                    baseline_total=b_total,
+                    baseline_successes=b_ok,
                     total=total,
                     successes=successes,
                     failures=failures,
@@ -272,14 +282,13 @@ class EventStore:
             failures = total - successes
             rate = successes / total
             base_items = base_buckets.get(k, [])
-            base = (
-                sum(1 for i in base_items if i.status == "success") / len(base_items)
-                if base_items
-                else None
-            )
+            b_ok = sum(1 for i in base_items if i.status == "success")
+            base = (b_ok / len(base_items)) if base_items else None
             stats.append(
                 SegmentStat(
                     segment=Segment(dimensions=dict(zip(dimensions, k))),
+                    baseline_total=len(base_items),
+                    baseline_successes=b_ok,
                     total=total,
                     successes=successes,
                     failures=failures,
@@ -294,6 +303,32 @@ class EventStore:
             )
         stats.sort(key=lambda s: (s.failure_rate_lower_bound, s.failure_share), reverse=True)
         return stats
+
+    def union_metric_window(
+        self, start: datetime, end: datetime, segments: Sequence[Segment]
+    ) -> MetricWindow:
+        """Aggregate over events matching ANY of the given segments, counting each event once.
+
+        Summing per-segment estimates double-counts whenever segments overlap — and they usually
+        do, since `psp=psp_axis` and `route_id=route_A` often describe the same transactions. The
+        union is the only way to get an unbiased total.
+        """
+        rows = self.slice(start, end)
+        matched = [e for e in rows if any(_matches(e, seg) for seg in segments)]
+        total = len(matched)
+        successes = sum(1 for e in matched if e.status == "success")
+        gmv = sum(e.amount_paise for e in matched if e.status == "success")
+        failed_gmv = sum(e.amount_paise for e in matched if e.status == "failed")
+        return MetricWindow(
+            start=start,
+            end=end,
+            total=total,
+            successes=successes,
+            failures=total - successes,
+            success_rate=(successes / total) if total else 0.0,
+            gmv_paise=gmv,
+            failed_gmv_paise=failed_gmv,
+        )
 
     def traffic_composition(
         self, start: datetime, end: datetime, dimension: str

@@ -80,7 +80,7 @@ LATENCY_LOGNORM = {"upi": (7.1, 0.45), "card": (7.5, 0.5), "netbanking": (7.9, 0
 # Errors a retry has a realistic chance of clearing.
 TRANSIENT_ERRORS = {"AUTH_TIMEOUT", "GATEWAY_TIMEOUT", "PSP_UNAVAILABLE", "BANK_UNAVAILABLE", "CHECKOUT_CALLBACK_TIMEOUT"}
 
-HIGH_VALUE_PAISE = 2_500_000  # INR 25,000
+HIGH_VALUE_PAISE = 1_000_000  # INR 10,000 - about 7% of card traffic, enough volume to reason about
 LOW_VALUE_PAISE = 100_000  # INR 1,000
 
 
@@ -186,29 +186,53 @@ class ControlPlane:
 
 @dataclass
 class GroundTruthAccumulator:
-    """Exact expected loss, accumulated from the generative process (never estimated)."""
+    """Exact expected loss, accumulated from the generative process (never estimated).
+
+    Loss is bucketed per minute rather than kept as a running total. Degradations ramp in and out,
+    so a single total divided by elapsed time would understate the loss rate at full severity — and
+    the evaluation harness needs to score the agent's estimate against the *same* window the agent
+    observed, not against a ramp-diluted average.
+    """
 
     expected_lost_paise: float = 0.0
     expected_lost_txns: float = 0.0
     attempts: int = 0
     window_start: datetime | None = None
     window_end: datetime | None = None
+    # Minute bucket (floor of the timestamp) -> expected loss in that minute.
+    buckets: dict[datetime, float] = field(default_factory=dict)
+    txn_buckets: dict[datetime, float] = field(default_factory=dict)
 
     def record(self, ts: datetime, amount_paise: int, p_nominal: float, p_effective: float) -> None:
         delta = max(0.0, p_nominal - p_effective)
         self.expected_lost_paise += amount_paise * delta
         self.expected_lost_txns += delta
         self.attempts += 1
+        minute = ts.replace(second=0, microsecond=0)
+        self.buckets[minute] = self.buckets.get(minute, 0.0) + amount_paise * delta
+        self.txn_buckets[minute] = self.txn_buckets.get(minute, 0.0) + delta
         if self.window_start is None or ts < self.window_start:
             self.window_start = ts
         if self.window_end is None or ts > self.window_end:
             self.window_end = ts
 
     def per_hour_paise(self) -> int:
+        """Loss rate over the whole scenario, ramps included."""
         if not self.window_start or not self.window_end:
             return 0
         seconds = max(1.0, (self.window_end - self.window_start).total_seconds())
         return int(self.expected_lost_paise * 3600.0 / seconds)
+
+    def per_hour_paise_between(self, start: datetime, end: datetime) -> int:
+        """Loss rate over a specific window — the fair comparison for an agent estimate."""
+        seconds = (end - start).total_seconds()
+        if seconds <= 0:
+            return 0
+        total = sum(v for minute, v in self.buckets.items() if start <= minute < end)
+        return int(total * 3600.0 / seconds)
+
+    def lost_txns_between(self, start: datetime, end: datetime) -> float:
+        return sum(v for minute, v in self.txn_buckets.items() if start <= minute < end)
 
 
 # --------------------------------------------------------------------------
@@ -432,6 +456,7 @@ class PaymentSimulator:
             retry_count=(retry_of.retry_count + 1) if retry_of else 0,
             is_retry=retry_of is not None,
             route_id=attrs["route_id"],
+            amount_band=attrs["amount_band"],
         )
 
         if (
@@ -493,9 +518,15 @@ class PaymentSimulator:
         """Generate clean history so the detector has a real baseline to work from."""
         return self.advance_seconds(minutes * 60)
 
-    def true_revenue_at_risk_per_hour(self, scenario_id: str) -> int:
+    def true_revenue_at_risk_per_hour(
+        self, scenario_id: str, start: datetime | None = None, end: datetime | None = None
+    ) -> int:
         acc = self.ground_truth.get(scenario_id)
-        return acc.per_hour_paise() if acc else 0
+        if not acc:
+            return 0
+        if start and end:
+            return acc.per_hour_paise_between(start, end)
+        return acc.per_hour_paise()
 
 
 def iter_events(events: Iterable[PaymentEvent]) -> Iterable[PaymentEvent]:

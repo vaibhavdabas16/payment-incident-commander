@@ -291,7 +291,7 @@ HIGH_VALUE_DEGRADATION = Scenario(
     ],
     config_change={
         "component": "risk_rules",
-        "description": "Tightened velocity rule threshold for card payments above INR 25,000",
+        "description": "Tightened velocity rule threshold for card payments above INR 10,000",
         "changed_by": "risk_ops",
     },
     recommended_action="rollback_change",
