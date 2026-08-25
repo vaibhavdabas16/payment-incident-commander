@@ -45,6 +45,16 @@ from .verification import VerificationAgent
 # How many times to keep waiting when verification cannot yet measure anything.
 MAX_INCONCLUSIVE_RETRIES = 2
 
+# After an incident closes, the same signature is suppressed for this long. Long enough to avoid
+# immediately reopening a fault a human is already looking at; short enough that a genuinely new
+# degradation of the same segment is still caught.
+SUPPRESSION_SECONDS = 900
+
+# A partial recovery leaving more than this much of a shortfall justifies another attempt.
+PARTIAL_RETRY_GAP = 0.05
+
+_SEVERITY_ORDER = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+
 # Actions that inform or observe but never change payment behaviour, so there is nothing for the
 # Verification Agent to measure.
 NON_REMEDIAL_ACTIONS = {
@@ -105,6 +115,7 @@ class IncidentSupervisor:
         self.escalation_agent = EscalationAgent()
 
         self.incidents: list[IncidentRecord] = []
+        self._incident_seq = 0
         self._route_health: dict[str, dict[str, float]] = {}
         self._executed_at: dict[str, datetime] = {}
 
@@ -161,7 +172,62 @@ class IncidentSupervisor:
 
         if signal is None:
             return None
+
+        # A degradation lasts many monitoring cycles, and the detector will keep firing for every
+        # one of them. Opening a fresh incident each time produces an incident storm: dozens of
+        # duplicates for one fault, a revenue-at-risk figure summed over all of them, and - worst -
+        # the merchant's hourly action budget spent on the same problem until every later incident
+        # escalates for rate limiting. Repeat detections are correlated into the incident that is
+        # already tracking them.
+        existing = self._correlate(signal)
+        if existing is not None:
+            existing.correlated_detections += 1
+            if _severity_rank(signal.severity) > _severity_rank(existing.severity):
+                existing.severity = signal.severity
+            if self.emit:
+                self.emit(
+                    "detection_correlated",
+                    {
+                        "incident_id": existing.incident_id,
+                        "signature": existing.signature,
+                        "detections": existing.correlated_detections,
+                    },
+                )
+            return None
+
         return self.observe_from_signal(signal, step)
+
+    def _correlate(self, signal: AnomalySignal) -> IncidentRecord | None:
+        """Find an incident that already covers this signal, if any.
+
+        Matched on *overlap* between affected segments rather than on the worst-hit segment being
+        identical. During a live degradation the ranking reshuffles between cycles - one minute the
+        top segment is `upi & psp_axis`, the next it is `route_A`, then `upi` - so exact matching
+        recognises almost nothing and the system opens a new incident every cycle for one fault.
+
+        Two cases count as the same incident: one still open, and one that closed very recently.
+        The second matters because a degradation usually continues after the agent has finished
+        responding; without a suppression window the system would immediately reopen, re-diagnose
+        and re-act on a fault it has already handed to a human.
+        """
+        keys = _segment_keys(signal)
+        if not keys:
+            return None
+
+        for incident in reversed(self.incidents):
+            if not keys & set(incident.segment_keys):
+                continue
+            if incident.state is not IncidentState.CLOSED:
+                return incident
+            if incident.closed_at is None:
+                continue
+            if (self.clock.now() - incident.closed_at).total_seconds() > SUPPRESSION_SECONDS:
+                continue
+            # A materially worse degradation deserves a fresh look even inside the window.
+            if _severity_rank(signal.severity) > _severity_rank(incident.severity) + 1:
+                return None
+            return incident
+        return None
 
     def observe_from_signal(
         self, signal: AnomalySignal, step: AgentStep | None = None
@@ -184,6 +250,13 @@ class IncidentSupervisor:
             ctx = self._context(placeholder)
             step = self.detection_agent.execute(ctx)
 
+        self._incident_seq += 1
+        signal = signal.model_copy(update={"incident_id": f"INC-{self._incident_seq:04d}"})
+
+        # Anchor the baseline: from here until the incident closes, degraded windows must not be
+        # absorbed into "normal".
+        self.detector.mark_degraded_from(signal.window_start)
+
         incident = IncidentRecord(
             incident_id=signal.incident_id,
             merchant_id=settings.simulation.merchant_id,
@@ -191,6 +264,8 @@ class IncidentSupervisor:
             severity=signal.severity,
             opened_at=signal.detected_at,
             title=_title(signal),
+            signature=_signature(signal),
+            segment_keys=sorted(_segment_keys(signal)),
             anomaly=signal,
             steps=[_reattribute(step, signal.incident_id)],
         )
@@ -397,6 +472,16 @@ class IncidentSupervisor:
             incident.revenue_protected_per_hour_paise = (
                 verification.estimated_revenue_protected_per_hour_paise
             )
+            # A partial recovery that leaves a large shortfall is worth one more push - the policy
+            # gateway's cumulative-shift ceiling is what stops this from becoming an endless ratchet.
+            residual = verification.baseline_success_rate - verification.after_success_rate
+            if (
+                status is VerificationStatus.PARTIALLY_RECOVERED
+                and residual > PARTIAL_RETRY_GAP
+                and incident.attempts < settings.max_intervention_attempts
+            ):
+                self._transition(incident, IncidentState.DIAGNOSING)
+                return inconclusive
             self._transition(incident, IncidentState.RESOLVED)
             return inconclusive
 
@@ -478,6 +563,11 @@ class IncidentSupervisor:
 
     def _step_close(self, incident: IncidentRecord) -> None:
         incident.closed_at = self.clock.now()
+        # Let the baseline start learning again only once nothing is open.
+        if not any(
+            i.state is not IncidentState.CLOSED for i in self.incidents if i is not incident
+        ):
+            self.detector.mark_recovered(incident.closed_at)
         if self.memory is not None:
             self.memory.record(incident)
         if self.emit:
@@ -539,6 +629,26 @@ class IncidentSupervisor:
         incident.outcome = "REJECTED_BY_HUMAN"
         self._escalate(incident, "policy_requires_approval")
         return self.run_incident(incident)
+
+
+def _segment_keys(signal: AnomalySignal) -> set[str]:
+    """Every segment this signal implicates, used to correlate detections across cycles."""
+    return {s.segment.key() for s in signal.affected_segments} or {signal.metric}
+
+
+def _signature(signal: AnomalySignal) -> str:
+    """Stable identity for what is broken.
+
+    Keyed on the worst affected segment rather than the incident id, so the same fault detected
+    five minutes later is recognised as the same fault.
+    """
+    if signal.affected_segments:
+        return signal.affected_segments[0].segment.key()
+    return signal.metric
+
+
+def _severity_rank(severity) -> int:
+    return _SEVERITY_ORDER.index(getattr(severity, "value", str(severity)))
 
 
 def _title(signal: AnomalySignal) -> str:

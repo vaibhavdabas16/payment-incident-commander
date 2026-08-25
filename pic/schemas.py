@@ -448,6 +448,13 @@ class IncidentRecord(BaseModel):
     opened_at: datetime
     closed_at: datetime | None = None
     title: str = ""
+    # Stable identity for the thing that is broken, used to correlate repeat detections into one
+    # incident instead of opening a new one every monitoring cycle.
+    signature: str = ""
+    # Every segment key this incident covers, so a later detection that lands on any of them is
+    # recognised as the same fault even when the worst-hit segment has shifted.
+    segment_keys: list[str] = Field(default_factory=list)
+    correlated_detections: int = 0
     anomaly: AnomalySignal | None = None
     evidence: EvidenceBundle | None = None
     impact: ImpactAssessment | None = None

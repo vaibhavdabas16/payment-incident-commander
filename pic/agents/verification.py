@@ -54,6 +54,9 @@ class VerificationAgent(Agent):
     name = "verification"
     state = IncidentState.VERIFYING
 
+    # Set per run: the shortfall against baseline that remains after the intervention.
+    baseline_gap: float = 0.0
+
     def run(self, ctx: IncidentContext) -> AgentResult:
         incident = ctx.incident
         action = incident.action_result
@@ -78,6 +81,9 @@ class VerificationAgent(Agent):
         baseline_rate = anomaly.baseline
         improvement = after.success_rate - before.success_rate
         gap = max(1e-9, baseline_rate - before.success_rate)
+
+        # How far the merchant's overall success rate still sits below baseline, right now.
+        self.baseline_gap = max(0.0, baseline_rate - after.success_rate)
 
         control = self._control_comparison(ctx, executed_at, ctx.now)
         side_effects = self._side_effects(ctx, executed_at, ctx.now)
@@ -253,13 +259,20 @@ class VerificationAgent(Agent):
                     False,
                     recovery_ratio,
                 )
-            if recovery_ratio >= cfg.full_recovery_ratio:
+
+            # A working intervention is not the same as a resolved incident. The control proves the
+            # action helped the traffic it moved; whether the merchant is whole again is a separate
+            # question, and the honest test is what the overall success rate is doing now. Closing
+            # on the control alone would mark an incident recovered while payments were still
+            # failing at 74% - and worse, would let the frozen baseline start absorbing the outage.
+            residual_gap = self.baseline_gap
+            if residual_gap <= cfg.min_meaningful_improvement:
                 return (VerificationStatus.RECOVERED, detail, False, recovery_ratio)
             return (
                 VerificationStatus.PARTIALLY_RECOVERED,
                 detail
-                + f" This closes about {recovery_ratio:.0%} of the gap to baseline; the incident "
-                "stays open.",
+                + f" Overall success rate is still {residual_gap:.1%} below baseline, so the "
+                "incident stays open.",
                 False,
                 recovery_ratio,
             )

@@ -79,6 +79,33 @@ class Detector:
         self.store = store
         self.config = config or settings.detection
         self._incident_seq = 0
+        # Half-open intervals of known-degraded time, excluded from every baseline.
+        self._degraded_periods: list[tuple[datetime, datetime | None]] = []
+
+    # -------------------------------------------------- degraded-period marks
+
+    def mark_degraded_from(self, start: datetime) -> None:
+        """Record that a degradation is known to be in progress from `start`.
+
+        Without this a long outage quietly becomes the new normal: the rolling baseline keeps
+        absorbing degraded windows until the "expected" success rate has fallen to match the
+        failure, the deviation shrinks to zero, and the detector stops reporting a problem that is
+        still costing the merchant money every minute. Excluding known-bad periods keeps the
+        baseline anchored to healthy behaviour for as long as the incident lasts.
+        """
+        if self._degraded_periods and self._degraded_periods[-1][1] is None:
+            return
+        self._degraded_periods.append((start, None))
+
+    def mark_recovered(self, end: datetime) -> None:
+        if self._degraded_periods and self._degraded_periods[-1][1] is None:
+            self._degraded_periods[-1] = (self._degraded_periods[-1][0], end)
+
+    def _is_degraded_window(self, window: MetricWindow) -> bool:
+        for start, end in self._degraded_periods:
+            if window.end > start and (end is None or window.start < end):
+                return True
+        return False
 
     # ------------------------------------------------------------- baselines
 
@@ -92,7 +119,11 @@ class Detector:
             count=cfg.baseline_windows,
             filters=filters,
         )
-        usable = [w for w in windows if w.total >= max(10, cfg.min_sample_size // 3)]
+        usable = [
+            w
+            for w in windows
+            if w.total >= max(10, cfg.min_sample_size // 3) and not self._is_degraded_window(w)
+        ]
         rates = [w.success_rate for w in usable]
         return BaselineSnapshot(
             windows=usable,
@@ -174,9 +205,12 @@ class Detector:
         if confidence < cfg.min_confidence:
             return None
 
-        self._incident_seq += 1
+        # No id is minted here. A degradation produces a signal on every cycle it persists, and
+        # numbering them would make incident ids race far ahead of the incidents that actually
+        # exist - INC-0016 on screen when two incidents have ever opened. The supervisor assigns an
+        # id only when a signal turns out to be a genuinely new incident.
         return AnomalySignal(
-            incident_id=f"INC-{self._incident_seq:04d}",
+            incident_id="",
             detected_at=now,
             severity=self.severity(drop, revenue_at_risk),
             metric=metric,
