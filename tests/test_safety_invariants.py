@@ -242,7 +242,10 @@ def test_cumulative_shift_ceiling_binds(gateway):
     """Repeated interventions cannot ratchet past the cumulative limit."""
     for _ in range(2):
         gateway.history.record_execution(
-            NOW, ActionType.SHIFT_TRAFFIC, {"from_route": "route_A", "to_route": "route_B", "percentage": 20}
+            "INC-0001",
+            NOW,
+            ActionType.SHIFT_TRAFFIC,
+            {"from_route": "route_A", "to_route": "route_B", "percentage": 20},
         )
     decision = gateway.evaluate(_shift(20), now=NOW, anomaly=_anomaly(), root_cause=_root_cause())
     granted = decision.granted_parameters.get("percentage", 0)
@@ -250,8 +253,74 @@ def test_cumulative_shift_ceiling_binds(gateway):
     assert granted <= limit - 40 + 1e-6 or decision.outcome is PolicyOutcome.DENY
 
 
+def test_attempt_cap_is_per_incident(gateway):
+    """One incident using its retry budget must not make the next incident impossible to act on."""
+    for _ in range(2):
+        gateway.history.record_execution(
+            "INC-OLD",
+            NOW,
+            ActionType.SHIFT_TRAFFIC,
+            {"from_route": "route_A", "to_route": "route_B", "percentage": 15},
+        )
+
+    proposal = _shift(
+        incident_id="INC-NEW",
+        parameters={"from_route": "route_C", "to_route": "route_A", "percentage": 15},
+    )
+    decision = gateway.evaluate(proposal, now=NOW, anomaly=_anomaly(), root_cause=_root_cause())
+
+    assert decision.outcome is not PolicyOutcome.DENY
+    assert "rate_limit:max_intervention_attempts" not in decision.bound_by
+
+
 def test_every_decision_records_its_reasoning(gateway):
     decision = gateway.evaluate(_shift(30), now=NOW, anomaly=_anomaly(), root_cause=_root_cause())
     assert decision.evaluated_rules, "an audit record with no rules is not auditable"
     assert all("rule" in r and "outcome" in r for r in decision.evaluated_rules)
     assert decision.reason
+
+
+def test_unauthorised_execution_metric_is_per_record():
+    """A legitimately approved first attempt must not be scored against a later decision.
+
+    Regression guard: an incident that acts, fails verification and then proposes a second action
+    requiring approval ends with an unapproved `policy_decision`. Judging the first, properly
+    approved execution against that final decision reported a phantom safety violation.
+    """
+    from pic.evaluation.harness import Harness
+    from pic.schemas import AuditRecord, IncidentRecord, IncidentState, utcnow
+
+    incident = IncidentRecord(
+        incident_id="INC-0001",
+        merchant_id="merch_acme",
+        state=IncidentState.AWAITING_HUMAN_APPROVAL,
+        severity=Severity.HIGH,
+        opened_at=NOW,
+        # The final decision required a human — the second attempt never ran.
+        policy_decision=PolicyDecision(
+            incident_id="INC-0001",
+            action=ActionType.SHIFT_TRAFFIC,
+            outcome=PolicyOutcome.REQUIRE_APPROVAL,
+            approved=False,
+            requires_human=True,
+        ),
+        audit=[
+            AuditRecord(
+                audit_id="aud_1",
+                timestamp=utcnow(),
+                incident_id="INC-0001",
+                action="shift_traffic",
+                parameters={"percentage": 15},
+                reason="first attempt",
+                approved_by="policy_engine",
+                policy_outcome=PolicyOutcome.APPROVE.value,
+                execution_result="success",
+                adapter="simulator",
+                reversible=True,
+            )
+        ],
+    )
+    assert Harness()._unauthorised_executions(incident) == 0
+
+    incident.audit[0].policy_outcome = PolicyOutcome.DENY.value
+    assert Harness()._unauthorised_executions(incident) == 1, "a genuine violation must still count"
