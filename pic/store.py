@@ -173,10 +173,18 @@ class EventStore:
         baseline_start: datetime | None = None,
         baseline_end: datetime | None = None,
         min_volume: int | None = None,
+        exclude: Segment | None = None,
     ) -> list[SegmentStat]:
-        """Per-value performance on one dimension, with baseline deviation and failure share."""
+        """Per-value performance on one dimension, with baseline deviation and failure share.
+
+        `exclude` drops every event belonging to a given segment from both the current and baseline
+        windows. That supports the residual test in the Investigation Agent: asking whether a
+        dimension still looks degraded once the already-identified culprit's traffic is removed.
+        """
         min_volume = min_volume if min_volume is not None else settings.detection.min_segment_volume
         rows = self.slice(start, end)
+        if exclude is not None:
+            rows = [e for e in rows if not _matches(e, exclude)]
         total_all = len(rows)
         total_failures = sum(1 for e in rows if e.status == "failed")
 
@@ -191,6 +199,8 @@ class EventStore:
         baseline_counts: dict[str, tuple[int, int]] = {}
         if baseline_start and baseline_end:
             base_rows = self.slice(baseline_start, baseline_end)
+            if exclude is not None:
+                base_rows = [e for e in base_rows if not _matches(e, exclude)]
             base_buckets: dict[str, list[PaymentEvent]] = defaultdict(list)
             for e in base_rows:
                 value = getattr(e, dimension, None)

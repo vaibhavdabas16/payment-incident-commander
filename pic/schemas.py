@@ -236,6 +236,9 @@ class EvidenceBundle(BaseModel):
     baseline_error_distribution: dict[str, int] = Field(default_factory=dict)
     dominant_error_code: str | None = None
     dominant_error_share: float = 0.0
+    # The segment judged to be the primary fault; other segments are tested against it for
+    # independence so echoes are not mistaken for concurrent faults.
+    primary_segment: dict[str, str] = Field(default_factory=dict)
     latency_shift_ms: float = 0.0
     recent_config_changes: list[ConfigChange] = Field(default_factory=list)
     traffic_composition_shift: dict[str, float] = Field(default_factory=dict)
@@ -368,6 +371,14 @@ class VerificationResult(BaseModel):
     statistically_significant: bool = False
     before_sample: int = 0
     after_sample: int = 0
+    # Concurrent control comparison, when the action creates a natural control group (traffic left
+    # on the old route). Immune to the incident worsening on its own, unlike before/after.
+    control_used: bool = False
+    treated_success_rate: float | None = None
+    control_success_rate: float | None = None
+    treated_sample: int = 0
+    control_sample: int = 0
+    caused_harm: bool = False
     estimated_revenue_protected_per_hour_paise: int = 0
     side_effects: list[str] = Field(default_factory=list)
     rollback_recommended: bool = False

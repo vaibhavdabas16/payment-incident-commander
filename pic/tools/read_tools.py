@@ -13,6 +13,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any
 
+from ..schemas import Segment
 from ..store import wilson_lower_bound
 from .registry import ToolContext, ToolSpec
 
@@ -76,6 +77,49 @@ def _segment_rows(
 # --------------------------------------------------------------------------
 # Tool implementations
 # --------------------------------------------------------------------------
+
+
+def get_residual_segment_metrics(
+    ctx: ToolContext,
+    dimension: str,
+    exclude_segment: dict[str, str],
+    minutes: int | None = None,
+    baseline_minutes: int | None = None,
+) -> dict[str, Any]:
+    """Performance on `dimension` after removing an already-identified failing segment.
+
+    This is how the investigation separates a genuine second fault from an echo of the first. When
+    one PSP is failing, every issuer and every region also looks degraded, because they all carry
+    traffic through it. Excluding the culprit's traffic and re-measuring answers the only question
+    that matters: is this dimension still broken on its own?
+    """
+    start, end, base_start, base_end = _windows(ctx, minutes, baseline_minutes)
+    stats = ctx.store.segment_stats(
+        start,
+        end,
+        dimension,
+        base_start,
+        base_end,
+        exclude=Segment(dimensions=exclude_segment),
+    )
+    return {
+        "dimension": dimension,
+        "excluded_segment": exclude_segment,
+        "rows": [
+            {
+                "segment": st.segment.dimensions,
+                "transactions": st.total,
+                "success_rate": _pct(st.success_rate),
+                "baseline_success_rate": _pct(st.baseline_success_rate)
+                if st.baseline_success_rate is not None
+                else None,
+                "deviation": _pct(st.deviation) if st.deviation is not None else None,
+                "failure_share": _pct(st.failure_share),
+                "traffic_share": _pct(st.traffic_share),
+            }
+            for st in stats[:10]
+        ],
+    }
 
 
 def get_success_rate_series(
@@ -358,6 +402,23 @@ _WINDOW_PARAMS = {
 }
 
 SPECS = [
+    ToolSpec(
+        name="get_residual_segment_metrics",
+        description=(
+            "Success rate per value of a dimension after excluding one already-identified failing "
+            "segment. Distinguishes an independent second fault from an echo of the first."
+        ),
+        parameters={
+            "dimension": {"type": "string", "required": True},
+            "exclude_segment": {
+                "type": "object",
+                "required": True,
+                "description": "Segment to remove, e.g. {\"psp\": \"psp_axis\"}.",
+            },
+            **_WINDOW_PARAMS,
+        },
+        func=get_residual_segment_metrics,
+    ),
     ToolSpec(
         name="get_success_rate_series",
         description="Time series of payment success rate, optionally filtered to one payment method.",
