@@ -9,6 +9,34 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _load_dotenv() -> None:
+    """Load `.env` into the environment if present, without overriding real env vars.
+
+    Parsed here rather than depending on python-dotenv, so the repository installs and runs with
+    nothing beyond the declared requirements. Real environment variables always win: a key exported
+    in a shell or injected by a deploy must not be silently overridden by a stale file on disk.
+    """
+    path = ROOT / ".env"
+    if not path.exists():
+        return
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip("\"'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except OSError:
+        # A malformed or unreadable .env must not stop the system from starting.
+        pass
+
+
+_load_dotenv()
+
+
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None:

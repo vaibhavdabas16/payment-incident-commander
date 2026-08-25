@@ -1,0 +1,27 @@
+# Optional. The project runs without Docker by design (ADR-004) — SQLite is the default and
+# `python -m pic.demo` needs no daemon. This exists for anyone who wants Postgres and a
+# containerised API instead.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pic
+      POSTGRES_PASSWORD: pic
+      POSTGRES_DB: pic
+    ports: ["5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pic"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      PIC_DATABASE_URL: postgresql+psycopg://pic:pic@db:5432/pic
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      PIC_LLM_PROVIDER: ${PIC_LLM_PROVIDER:-auto}
+    ports: ["8000:8000"]
+    depends_on:
+      db: { condition: service_healthy }
+    command: uvicorn pic.api.main:app --host 0.0.0.0 --port 8000
