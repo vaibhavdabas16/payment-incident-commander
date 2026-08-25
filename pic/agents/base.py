@@ -37,6 +37,8 @@ class IncidentContext:
     control: Any = None
     # Emits lifecycle events for the dashboard's live stream.
     emit: Callable[[str, dict[str, Any]], None] | None = None
+    # Advances simulated time to account for how long an agent step really took.
+    charge_time: Callable[[float], None] | None = None
     scratch: dict[str, Any] = field(default_factory=dict)
 
     def publish(self, kind: str, payload: dict[str, Any]) -> None:
@@ -108,6 +110,14 @@ class Agent(ABC):
             },
         )
         ctx.scratch[f"{self.name}_result"] = result
+
+        # Charge the incident for the wall-clock time this agent actually took. Without it the
+        # whole pipeline appears to complete instantaneously in simulated time, and time-to-mitigate
+        # would be reported as zero - flattering, and false. Real reasoning costs real seconds
+        # (noticeably more when a model is in the loop), and the merchant is losing revenue
+        # throughout, so the clock has to reflect it.
+        if ctx.charge_time is not None:
+            ctx.charge_time(step.latency_ms / 1000.0)
         return step
 
 

@@ -56,10 +56,20 @@ NON_REMEDIAL_ACTIONS = {
 
 @dataclass
 class Clock:
-    """Time source. In the demo it advances the simulator; in tests it can be instantaneous."""
+    """Time source. In the demo it advances the simulator; in tests it can be instantaneous.
+
+    `wait` is a deliberate observation pause - the system stands back and lets traffic accumulate.
+    `advance` is bookkeeping for time that has already passed while an agent was thinking. Both move
+    the simulated clock forward; keeping them separate keeps the distinction legible in the code.
+    """
 
     now: Callable[[], datetime]
     wait: Callable[[float], None]
+    advance: Callable[[float], None] | None = None
+
+    def __post_init__(self) -> None:
+        if self.advance is None:
+            self.advance = self.wait
 
 
 class IncidentSupervisor:
@@ -112,6 +122,7 @@ class IncidentSupervisor:
             memory=self.memory,
             control=self.control,
             emit=self.emit,
+            charge_time=self.clock.advance,
         )
         # The registry shares the context's clock and incident id so tool results are windowed
         # consistently and every call is attributed to the right incident.
@@ -150,6 +161,28 @@ class IncidentSupervisor:
 
         if signal is None:
             return None
+        return self.observe_from_signal(signal, step)
+
+    def observe_from_signal(
+        self, signal: AnomalySignal, step: AgentStep | None = None
+    ) -> IncidentRecord:
+        """Open an incident from a detection signal produced elsewhere.
+
+        The evaluation harness evaluates the detector itself, window by window, so that precision
+        and recall have a denominator. It then needs to open an incident from the signal it already
+        holds rather than detecting a second time, which would double-count and could even produce
+        a different result.
+        """
+        if step is None:
+            placeholder = IncidentRecord(
+                incident_id=signal.incident_id,
+                merchant_id=settings.simulation.merchant_id,
+                state=IncidentState.OBSERVING,
+                severity=signal.severity,
+                opened_at=signal.detected_at,
+            )
+            ctx = self._context(placeholder)
+            step = self.detection_agent.execute(ctx)
 
         incident = IncidentRecord(
             incident_id=signal.incident_id,
