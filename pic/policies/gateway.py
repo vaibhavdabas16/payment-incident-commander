@@ -65,33 +65,44 @@ class InterventionHistory:
     """What the agent has already done, so rate limits and conflicts can be enforced."""
 
     executed_at: list[datetime] = field(default_factory=list)
-    failed_at: list[datetime] = field(default_factory=list)
-    cumulative_shift_pct: dict[str, float] = field(default_factory=dict)
-    attempts: int = 0
-    active_routes: set[str] = field(default_factory=set)
+    failed_at: dict[str, list[datetime]] = field(default_factory=dict)
+    cumulative_shift_pct: dict[str, dict[str, float]] = field(default_factory=dict)
+    attempts: dict[str, int] = field(default_factory=dict)
+    active_routes: dict[str, set[str]] = field(default_factory=dict)
 
-    def record_execution(self, at: datetime, action: ActionType, params: dict[str, Any]) -> None:
+    def record_execution(
+        self, incident_id: str, at: datetime, action: ActionType, params: dict[str, Any]
+    ) -> None:
         self.executed_at.append(at)
-        self.attempts += 1
+        self.attempts[incident_id] = self.attempts.get(incident_id, 0) + 1
         if action is ActionType.SHIFT_TRAFFIC:
             src = str(params.get("from_route"))
-            self.cumulative_shift_pct[src] = self.cumulative_shift_pct.get(src, 0.0) + float(
+            shifted = self.cumulative_shift_pct.setdefault(incident_id, {})
+            shifted[src] = shifted.get(src, 0.0) + float(
                 params.get("percentage", 0)
             )
-            self.active_routes.add(src)
-            self.active_routes.add(str(params.get("to_route")))
+            routes = self.active_routes.setdefault(incident_id, set())
+            routes.add(src)
+            routes.add(str(params.get("to_route")))
 
-    def record_failure(self, at: datetime) -> None:
-        self.failed_at.append(at)
+    def record_failure(self, incident_id: str, at: datetime) -> None:
+        self.failed_at.setdefault(incident_id, []).append(at)
 
     def actions_in_last_hour(self, now: datetime) -> int:
         cutoff = now - timedelta(hours=1)
         return sum(1 for t in self.executed_at if t >= cutoff)
 
-    def seconds_since_failure(self, now: datetime) -> float | None:
-        if not self.failed_at:
+    def seconds_since_failure(self, incident_id: str, now: datetime) -> float | None:
+        failures = self.failed_at.get(incident_id, [])
+        if not failures:
             return None
-        return (now - max(self.failed_at)).total_seconds()
+        return (now - max(failures)).total_seconds()
+
+    def attempts_for(self, incident_id: str) -> int:
+        return self.attempts.get(incident_id, 0)
+
+    def cumulative_shift_from(self, incident_id: str, route: str) -> float:
+        return self.cumulative_shift_pct.get(incident_id, {}).get(route, 0.0)
 
 
 class PolicyGateway:
@@ -137,7 +148,7 @@ class PolicyGateway:
         results.append(self._rule_confidence(anomaly, root_cause))
         results.append(self._rule_expected_value(proposal))
         results.append(self._rule_risk(proposal))
-        results.extend(self._rule_rate_limits(now))
+        results.extend(self._rule_rate_limits(proposal.incident_id, now))
         results.append(self._rule_routing(proposal, granted, route_health))
 
         binding = min(results, key=lambda r: _SEVERITY_ORDER[r.outcome])
@@ -222,7 +233,7 @@ class PolicyGateway:
                 )
 
             source = str(granted.get("from_route"))
-            already = self.history.cumulative_shift_pct.get(source, 0.0)
+            already = self.history.cumulative_shift_from(proposal.incident_id, source)
             cumulative_limit = float(bounds.get("max_cumulative_traffic_shift_pct", 100))
             projected = already + float(granted.get("percentage", 0) or 0)
             if projected > cumulative_limit:
@@ -350,7 +361,7 @@ class PolicyGateway:
             )
         return RuleResult("risk:max_autonomous_risk_score", PolicyOutcome.APPROVE, "acceptable risk")
 
-    def _rule_rate_limits(self, now: datetime) -> list[RuleResult]:
+    def _rule_rate_limits(self, incident_id: str, now: datetime) -> list[RuleResult]:
         out: list[RuleResult] = []
         limits = self.rate_limits
 
@@ -366,7 +377,7 @@ class PolicyGateway:
             )
 
         cooloff = float(limits.get("cooloff_after_failed_intervention_seconds", 0))
-        since = self.history.seconds_since_failure(now)
+        since = self.history.seconds_since_failure(incident_id, now)
         if cooloff and since is not None and since < cooloff:
             out.append(
                 RuleResult(
@@ -380,12 +391,14 @@ class PolicyGateway:
             )
 
         max_attempts = int(limits.get("max_intervention_attempts", 2))
-        if self.history.attempts >= max_attempts:
+        attempts = self.history.attempts_for(incident_id)
+        if attempts >= max_attempts:
             out.append(
                 RuleResult(
                     "rate_limit:max_intervention_attempts",
                     PolicyOutcome.DENY,
-                    f"{self.history.attempts} interventions already attempted (limit {max_attempts})",
+                    f"{attempts} interventions already attempted for this incident "
+                    f"(limit {max_attempts})",
                 )
             )
 

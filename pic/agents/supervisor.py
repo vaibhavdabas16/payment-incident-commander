@@ -468,7 +468,7 @@ class IncidentSupervisor:
         incident.attempts += 1
 
         if not result.ok or result.output is None:
-            self.gateway.history.record_failure(self.clock.now())
+            self.gateway.history.record_failure(incident.incident_id, self.clock.now())
             return self._escalate(incident, "intervention_failed")
 
         incident.action_result = result.output
@@ -542,7 +542,7 @@ class IncidentSupervisor:
         # second attempt would then be measured against a configuration nobody chose. Only
         # REGRESSED implies the action caused damage, but both cases must leave the system as they
         # found it.
-        self.gateway.history.record_failure(self.clock.now())
+        self.gateway.history.record_failure(incident.incident_id, self.clock.now())
         reverted = self._revert_action(incident)
         if not reverted:
             return self._escalate(incident, "rollback_failed") or inconclusive

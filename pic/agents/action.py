@@ -97,7 +97,9 @@ class ActionAgent(Agent):
         self._audit(ctx, result, decision, proposal.rationale, "success")
 
         # Rate limits and cumulative-shift ceilings are enforced against what actually executed.
-        ctx.gateway.history.record_execution(ctx.now, proposal.action, parameters)
+        ctx.gateway.history.record_execution(
+            incident.incident_id, ctx.now, proposal.action, parameters
+        )
 
         clamped = decision.granted_parameters != decision.requested_parameters
         summary = f"executed {proposal.action.value} with {parameters}"
