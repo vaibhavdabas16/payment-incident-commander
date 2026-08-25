@@ -22,6 +22,9 @@ class DetectionConfig:
 
     window_seconds: int = 120
     baseline_windows: int = 20
+    # How much further back to search for healthy windows when recent ones are known-degraded.
+    # Sets the longest outage the baseline can survive without drifting: 20 x 6 x 120s = 4 hours.
+    baseline_lookback_multiplier: int = 6
     min_baseline_windows: int = 6
     ewma_alpha: float = 0.25
     # A window must carry at least this many attempts to be judged at all.

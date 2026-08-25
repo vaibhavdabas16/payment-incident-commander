@@ -113,17 +113,25 @@ class Detector:
         """Rolling baseline from the windows immediately preceding the current one."""
         cfg = self.config
         current_start = now - timedelta(seconds=cfg.window_seconds)
+
+        # Look further back than the baseline actually needs, so that windows excluded for being
+        # known-degraded can be replaced by healthy ones from before the incident began. Without
+        # the deeper search, a long outage eventually covers the entire lookback, every window is
+        # excluded, and the baseline collapses to zero - which silently disables detection at the
+        # exact moment it matters most.
         windows = self.store.success_rate_series(
             end=current_start,
             window_seconds=cfg.window_seconds,
-            count=cfg.baseline_windows,
+            count=cfg.baseline_windows * cfg.baseline_lookback_multiplier,
             filters=filters,
         )
-        usable = [
+        healthy = [
             w
             for w in windows
             if w.total >= max(10, cfg.min_sample_size // 3) and not self._is_degraded_window(w)
         ]
+        # Most recent healthy windows, still in chronological order for the EWMA.
+        usable = healthy[-cfg.baseline_windows :]
         rates = [w.success_rate for w in usable]
         return BaselineSnapshot(
             windows=usable,

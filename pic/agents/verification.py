@@ -383,11 +383,20 @@ class VerificationAgent(Agent):
     ) -> int:
         """Revenue the intervention is protecting, per hour.
 
-        Valued from the control comparison where one exists, because that is the part of the
-        improvement actually attributable to the action. An intervention that made things worse
-        protected nothing — reporting a negative figure as "protected" would be misleading.
+        The per-payment gain from the control comparison applies only to the traffic that was
+        actually moved, so it is scaled by the treated share of *all* payments - measured directly
+        from the treated and total sample counts rather than inferred from the requested shift
+        percentage. Scaling a 66-point per-payment gain across the merchant's entire volume is how
+        this previously reported more revenue protected than the incident had ever put at risk.
+
+        Capped at the assessed revenue at risk: an intervention cannot protect more than the
+        incident threatened, and a figure that exceeds it is a bug being reported as a benefit.
         """
-        if status in (VerificationStatus.REGRESSED, VerificationStatus.FAILED, VerificationStatus.INCONCLUSIVE):
+        if status in (
+            VerificationStatus.REGRESSED,
+            VerificationStatus.FAILED,
+            VerificationStatus.INCONCLUSIVE,
+        ):
             return 0
         if after.total == 0:
             return 0
@@ -399,11 +408,16 @@ class VerificationAgent(Agent):
         attempts_per_hour = after.total / hours
 
         if control is not None:
-            realised = max(0.0, control["diff"] * control["moved_fraction"])
+            treated_share = control["treated_total"] / after.total
+            realised = max(0.0, control["diff"]) * treated_share
         else:
             realised = max(0.0, improvement)
-        _ = ctx
-        return int(realised * attempts_per_hour * avg_value)
+
+        protected = int(realised * attempts_per_hour * avg_value)
+        impact = ctx.incident.impact
+        if impact and impact.revenue_at_risk_per_hour_paise > 0:
+            protected = min(protected, impact.revenue_at_risk_per_hour_paise)
+        return protected
 
 
 def describe_outcome(result: VerificationResult) -> str:

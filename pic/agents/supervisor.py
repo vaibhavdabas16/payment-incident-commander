@@ -53,6 +53,9 @@ SUPPRESSION_SECONDS = 900
 # A partial recovery leaving more than this much of a shortfall justifies another attempt.
 PARTIAL_RETRY_GAP = 0.05
 
+# How many times to wait for more evidence before giving up on explaining an incident.
+MAX_DIAGNOSIS_RETRIES = 2
+
 _SEVERITY_ORDER = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 
 # Actions that inform or observe but never change payment behaviour, so there is nothing for the
@@ -118,6 +121,7 @@ class IncidentSupervisor:
         self._incident_seq = 0
         self._route_health: dict[str, dict[str, float]] = {}
         self._executed_at: dict[str, datetime] = {}
+        self._diagnosis_retries: dict[str, int] = {}
 
     # ----------------------------------------------------------------- setup
 
@@ -347,8 +351,44 @@ class IncidentSupervisor:
         ctx = self._context(incident)
         self.root_cause_agent.execute(ctx)
         result = ctx.scratch["root_cause_result"]
+
         if not result.ok or result.output is None:
+            # No hypothesis fits the evidence. Early in an incident this usually means detection
+            # fired on a real but still-weak signal - the segment tier can see a degradation before
+            # there is enough of it to attribute. Escalating immediately would hand a human an
+            # incident with no diagnosis attached, when waiting one observation window normally
+            # produces a clear answer. Wait and re-investigate; only give up if it stays
+            # unexplainable.
+            attempts = self._diagnosis_retries.get(incident.incident_id, 0)
+            if attempts < MAX_DIAGNOSIS_RETRIES:
+                self._diagnosis_retries[incident.incident_id] = attempts + 1
+                if self.emit:
+                    self.emit(
+                        "diagnosis_deferred",
+                        {
+                            "incident_id": incident.incident_id,
+                            "attempt": attempts + 1,
+                            "reason": "no hypothesis fits the evidence yet",
+                        },
+                    )
+                self.clock.wait(settings.verification.observation_seconds)
+                # Re-detect before re-investigating. The original signal was weak, and every later
+                # stage anchors on its segment attribution - the echo test, the primary segment,
+                # the affected method. Re-investigating against a stale anomaly produces fresh
+                # evidence interpreted through an out-of-date picture of what is broken.
+                refreshed = self.detector.evaluate(self.clock.now())
+                if refreshed is not None:
+                    incident.anomaly = refreshed.model_copy(
+                        update={"incident_id": incident.incident_id}
+                    )
+                    incident.severity = refreshed.severity
+                    incident.segment_keys = sorted(
+                        set(incident.segment_keys) | _segment_keys(refreshed)
+                    )
+                self._transition(incident, IncidentState.DETECTED)
+                return
             return self._escalate(incident, "no_effective_action")
+
         incident.root_cause = result.output
         self._transition(incident, IncidentState.DIAGNOSING)
 
