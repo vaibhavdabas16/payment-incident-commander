@@ -225,30 +225,38 @@ MULTI_FACTOR = Scenario(
 # degraded too. Verification must catch this and force a rollback rather than declare success.
 UPI_PSP_DEGRADATION_BAD_FALLBACK = Scenario(
     scenario_id="SCN-UPI-PSP-BADFALLBACK",
-    name="UPI PSP degradation with an unhealthy fallback",
+    name="UPI rails degraded network-wide, presenting as a single PSP",
     description=(
-        "Same presentation as the PSP degradation, but the fallback route is degrading in "
-        "parallel. The intervention will not improve success rate; the system must notice, roll "
-        "back and escalate."
+        "Every UPI PSP is degrading together - an upstream rails problem, not a provider problem. "
+        "Random variation still makes one PSP look worst, so the evidence points at a reroute that "
+        "cannot possibly help. This is the failed-intervention case: the system must act, measure "
+        "no improvement against a concurrent control, roll back and escalate rather than declaring "
+        "victory or thrashing between routes."
     ),
-    root_cause_id="psp_degradation",
+    root_cause_id="payment_method_degradation",
     start_offset_s=0,
     duration_s=2700,
     effects=[
         Effect(
             match={"payment_method": "upi", "psp": "psp_axis"},
-            success_multiplier=0.34,
-            error_code="PSP_UNAVAILABLE",
-            latency_add_ms=1800,
-        ),
-        Effect(
-            match={"payment_method": "upi", "psp": "psp_yes"},
-            success_multiplier=0.40,
+            success_multiplier=0.42,
             error_code="PSP_UNAVAILABLE",
             latency_add_ms=1500,
         ),
+        Effect(
+            match={"payment_method": "upi", "psp": "psp_yes"},
+            success_multiplier=0.46,
+            error_code="PSP_UNAVAILABLE",
+            latency_add_ms=1400,
+        ),
+        Effect(
+            match={"payment_method": "upi", "psp": "psp_hdfc"},
+            success_multiplier=0.44,
+            error_code="PSP_UNAVAILABLE",
+            latency_add_ms=1400,
+        ),
     ],
-    recommended_action="shift_traffic",
+    recommended_action="escalate",
     fallback_healthy=False,
     from_route="route_A",
     to_route="route_B",

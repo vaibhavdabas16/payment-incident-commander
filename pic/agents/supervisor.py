@@ -45,6 +45,14 @@ from .verification import VerificationAgent
 # How many times to keep waiting when verification cannot yet measure anything.
 MAX_INCONCLUSIVE_RETRIES = 2
 
+# Actions that inform or observe but never change payment behaviour, so there is nothing for the
+# Verification Agent to measure.
+NON_REMEDIAL_ACTIONS = {
+    ActionType.NOTIFY_MERCHANT,
+    ActionType.CREATE_INCIDENT_TICKET,
+    ActionType.SET_MONITORING_FREQUENCY,
+}
+
 
 @dataclass
 class Clock:
@@ -274,6 +282,12 @@ class IncidentSupervisor:
         if decision.outcome is PolicyOutcome.DENY:
             return self._escalate(incident, "policy_denied")
         if decision.requires_human:
+            # Pausing for approval is not the same as doing nothing. A human has to be told, or an
+            # incident sits unattended behind a guardrail that was meant to protect it.
+            self._escalate(
+                incident, "policy_requires_approval", transition=False
+            )
+            incident.outcome = "AWAITING_APPROVAL"
             self._transition(incident, IncidentState.AWAITING_HUMAN_APPROVAL)
             if self.emit:
                 self.emit(
@@ -312,6 +326,15 @@ class IncidentSupervisor:
         incident.action_result = result.output
         incident.time_to_mitigate_s = (self.clock.now() - incident.opened_at).total_seconds()
         self._executed_at[incident.incident_id] = self.clock.now()
+
+        # Some actions never change payment behaviour: notifying the merchant, filing a ticket or
+        # watching more closely. Running a statistical recovery test on those would score them as
+        # failed interventions and burn a retry attempt, when in truth the system has correctly
+        # concluded that the fix belongs to a human. Hand over instead of pretending to verify.
+        if incident.proposal is not None and incident.proposal.action in NON_REMEDIAL_ACTIONS:
+            incident.outcome = "HANDED_TO_HUMAN"
+            return self._escalate(incident, "no_effective_action")
+
         self._transition(incident, IncidentState.EXECUTING)
 
     def _step_verify(self, incident: IncidentRecord, inconclusive: int) -> int:
@@ -356,8 +379,16 @@ class IncidentSupervisor:
                 self._transition(incident, IncidentState.VERIFYING)
             return inconclusive
 
-        # FAILED. Try once more with a different action if the budget allows, otherwise hand over.
+        # FAILED. Undo the change before doing anything else. An intervention that did not work is
+        # not harmless: it leaves the payment system in a modified state for no benefit, and any
+        # second attempt would then be measured against a configuration nobody chose. Only
+        # REGRESSED implies the action caused damage, but both cases must leave the system as they
+        # found it.
         self.gateway.history.record_failure(self.clock.now())
+        reverted = self._revert_action(incident)
+        if not reverted:
+            return self._escalate(incident, "rollback_failed") or inconclusive
+
         if incident.attempts < settings.max_intervention_attempts:
             self._transition(incident, IncidentState.DIAGNOSING)
         else:
@@ -365,10 +396,16 @@ class IncidentSupervisor:
         return inconclusive
 
     def _step_rollback(self, incident: IncidentRecord) -> None:
+        """Regression path: the intervention caused harm, so revert and hand to a human."""
+        reverted = self._revert_action(incident)
+        self._escalate(incident, "intervention_regressed" if reverted else "rollback_failed")
+
+    def _revert_action(self, incident: IncidentRecord) -> bool:
+        """Replay the recorded inverse of the executed action. Returns whether it succeeded."""
         ctx = self._context(incident)
         result = self.action_agent.rollback(ctx)
-        # `rollback` is called directly rather than through `execute`, so record the step by hand.
-        ctx.incident.steps.append(
+        # `rollback` is invoked directly rather than through `execute`, so record the step by hand.
+        incident.steps.append(
             AgentStep(
                 step_id=f"step_rollback_{len(incident.steps)}",
                 incident_id=incident.incident_id,
@@ -389,9 +426,10 @@ class IncidentSupervisor:
                 "rollback",
                 {"incident_id": incident.incident_id, "ok": result.ok, "summary": result.summary},
             )
-        self._escalate(
-            incident, "rollback_failed" if not result.ok else "intervention_regressed"
-        )
+        if result.ok:
+            # The reverted change no longer counts against the cumulative-shift ceiling.
+            incident.action_result = None
+        return result.ok
 
     def _step_escalate(self, incident: IncidentRecord) -> None:
         ctx = self._context(incident)
@@ -421,17 +459,24 @@ class IncidentSupervisor:
             )
         self._transition(incident, IncidentState.CLOSED)
 
-    def _escalate(self, incident: IncidentRecord, reason: str) -> None:
+    def _escalate(
+        self, incident: IncidentRecord, reason: str, transition: bool = True
+    ) -> None:
+        """Hand the incident to a human.
+
+        `transition=False` records and notifies without ending the workflow, which is what an
+        approval pause needs: the incident is still live and may yet be approved.
+        """
         ctx = self._context(incident)
         ctx.scratch["escalation_reason"] = reason
         self.escalation_agent.execute(ctx)
         incident.escalation = ctx.scratch["escalation_result"].output
+        if self.emit:
+            self.emit("escalated", {"incident_id": incident.incident_id, "reason": reason})
+        if not transition:
+            return
         if incident.outcome is None:
             incident.outcome = "ESCALATED"
-        if self.emit:
-            self.emit(
-                "escalated", {"incident_id": incident.incident_id, "reason": reason}
-            )
         self._transition(incident, IncidentState.LEARNING)
 
     # ------------------------------------------------------- human approval
@@ -442,6 +487,7 @@ class IncidentSupervisor:
             raise ValueError(f"incident {incident.incident_id} is not awaiting approval")
         decision = incident.policy_decision
         assert decision is not None
+        incident.outcome = None
         incident.policy_decision = decision.model_copy(
             update={
                 "approved": True,
