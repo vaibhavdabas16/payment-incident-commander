@@ -212,3 +212,37 @@ def test_agent_failure_degrades_to_escalation_not_a_crash(monkeypatch):
     assert incident.state in (IncidentState.CLOSED, IncidentState.LEARNING)
     failed = [s for s in incident.steps if not s.ok]
     assert failed and "simulated tool outage" in (failed[0].error or "")
+
+
+def test_a_fault_nested_inside_the_primary_segment_is_not_filed_as_its_echo():
+    """A genuine issuer outage must survive the independence test that its own method fails it.
+
+    Echoes are separated from real second faults by removing the primary segment's traffic and
+    re-measuring. That question is unanswerable when the candidate lives *inside* the primary:
+    `issuer=HDFC` issues cards, so excluding `payment_method=card` leaves it holding only its
+    healthy non-card volume. The forward test then reads "HDFC recovers once cards are gone" and
+    files the cause as an echo of the very method it is degrading - after which the issuer
+    hypothesis scores zero and the agent confidently blames the aggregate instead.
+
+    This seed reproduces that shape exactly: the primary segment is the bare method rather than
+    the `card & HDFC` slice, which is what makes the exclusion destroy the evidence.
+    """
+    engine, incident = _run("SCN-ISSUER", seed=20260824)
+    bundle = incident.evidence
+    assert bundle is not None
+    assert bundle.primary_segment == {"payment_method": "card"}
+
+    issuer = next(f for f in bundle.findings if f.dimension == "issuer")
+    assert issuer.metrics["independent"] is True, "the real cause was discarded as an echo"
+    assert issuer.metrics.get("echo_of") is None
+    assert incident.root_cause is not None
+    assert incident.root_cause.cause_id == "issuer_degradation"
+
+    # The reversed test must stay a scalpel, not a loosening. A region is equally deep and
+    # concentrated here, is equally eligible for it, and must still be rejected: excluding one
+    # state leaves cards just as broken, so the region is reporting the issuer fault, not a
+    # second one.
+    region = next((f for f in bundle.findings if f.dimension == "geography"), None)
+    if region is not None:
+        assert region.metrics["independent"] is False
+        assert region.metrics.get("echo_of") == {"payment_method": "card"}

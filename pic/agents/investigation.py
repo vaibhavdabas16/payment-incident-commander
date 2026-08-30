@@ -55,6 +55,11 @@ _RESIDUAL_DIMENSIONS = {"psp", "route_id", "gateway", "issuer", "geography", "pa
 # an independent fault rather than an echo.
 RESIDUAL_INDEPENDENCE_DROP = 0.08
 
+# Before spending a tool call on the reversed independence test, the candidate must be a
+# substantial fault in its own right - this deep below its baseline and this concentrated.
+REVERSE_TEST_MIN_DROP = 0.08
+REVERSE_TEST_MIN_CONCENTRATION = 1.3
+
 # Dimensions that describe the same routing decision, so one implies the others.
 _ROUTING_ALIASES = {"psp", "route_id", "gateway"}
 
@@ -591,6 +596,20 @@ class InvestigationAgent(Agent):
                 row["success_rate"], row.get("baseline_success_rate") or 0.0, row["transactions"]
             )
             independent = residual_dev <= -RESIDUAL_INDEPENDENCE_DROP and z <= -MIN_SEGMENT_Z
+            # A candidate that lives *inside* the primary is emptied by the exclusion, so the
+            # forward test cannot see it. Ask the question the other way round before filing it
+            # as an echo.
+            if not independent and self._primary_explained_by(
+                ctx, finding, primary_segment, window_minutes
+            ):
+                finding.metrics["independent"] = True
+                finding.metrics["explains_primary"] = dict(primary_segment)
+                finding.statement += (
+                    f" Excluding this segment, {_label(primary_segment)} returns to "
+                    f"{finding.metrics['primary_residual_deviation']:+.1%}, so it is this segment "
+                    "that degrades the wider one rather than the other way round."
+                )
+                continue
             finding.metrics["independent"] = independent
             if not independent:
                 finding.metrics["echo_of"] = primary_segment
@@ -599,6 +618,61 @@ class InvestigationAgent(Agent):
                     f" Excluding {_label(primary_segment)} traffic, this segment returns to "
                     f"{residual_dev:+.1%}, so it reflects that fault rather than an independent one."
                 )
+
+    def _primary_explained_by(
+        self,
+        ctx: IncidentContext,
+        finding: Finding,
+        primary_segment: dict[str, str],
+        window_minutes: int,
+    ) -> bool:
+        """Whether the primary segment is degraded only *because of* this candidate.
+
+        The forward residual test asks "is this segment still broken once the primary's traffic is
+        removed?". That question is unanswerable when the candidate sits inside the primary. An
+        issuer inside `payment_method=card` keeps only its non-card traffic once cards are
+        excluded, and that traffic is healthy - so a genuine issuer fault is filed as an echo of
+        the very method it is degrading, and the diagnosis confidently names the aggregate instead
+        of the cause.
+
+        So the test is reversed: remove the candidate and re-measure the primary. If the primary
+        recovers it was only ever reporting this candidate, and the candidate is the real fault. A
+        true echo fails this test - excluding one region from a card-wide issuer outage leaves
+        cards just as broken.
+        """
+        deviation = float(finding.metrics.get("deviation") or 0.0)
+        concentration = float(finding.metrics.get("concentration") or 0.0)
+        # Only worth a tool call for a candidate that is substantial in its own right.
+        if deviation > -REVERSE_TEST_MIN_DROP or concentration < REVERSE_TEST_MIN_CONCENTRATION:
+            return False
+        # Only meaningful against a single broad slice; a compound primary is already specific.
+        if len(primary_segment) != 1:
+            return False
+        primary_dim, primary_value = next(iter(primary_segment.items()))
+        if primary_dim == finding.dimension:
+            return False
+
+        residual = ctx.call_tool(
+            "get_residual_segment_metrics",
+            dimension=primary_dim,
+            exclude_segment=finding.metrics.get("segment") or {},
+            minutes=window_minutes,
+        )
+        if residual is None:
+            return False
+        row = next(
+            (
+                r
+                for r in residual["rows"]
+                if str(r["segment"].get(primary_dim)) == str(primary_value)
+            ),
+            None,
+        )
+        if row is None or row.get("deviation") is None:
+            return False
+        primary_residual = float(row["deviation"])
+        finding.metrics["primary_residual_deviation"] = round(primary_residual, 4)
+        return primary_residual > -RESIDUAL_INDEPENDENCE_DROP
 
     def _primary_segment(
         self, ctx: IncidentContext, candidates: list[Finding]
