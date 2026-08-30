@@ -106,9 +106,15 @@ def configure_retry(ctx: ToolContext, max_retries: int, enabled: bool = True) ->
 def rollback_change(ctx: ToolContext, change_id: str) -> dict[str, Any]:
     """Revert a merchant configuration change identified during investigation.
 
-    Modelled rather than simulated end-to-end: the simulator has no notion of un-deploying an SDK,
-    so this records the intent and notifies the owning team. Marked `partial_effect` so the
-    Verification Agent does not expect a full recovery and wrongly conclude the action failed.
+    This used to record intent only. The simulator kept degrading traffic regardless, so the one
+    action that genuinely addresses a config regression could never show a recovery: verification
+    read no improvement and the agent dutifully reverted its own correct fix. Every failed
+    rollback in the benchmark was one of these, which made `rollback_success_rate` a statement
+    about the simulator rather than about the agent.
+
+    The control plane now honours it - a degradation caused by a recorded change stops when that
+    change is reverted - and the action carries a real inverse, so reverting it is reversible like
+    any other write.
     """
     changes = {c.change_id: c for c in ctx.store.config_changes(
         ctx.now.replace(year=ctx.now.year - 1), ctx.now
@@ -118,6 +124,8 @@ def rollback_change(ctx: ToolContext, change_id: str) -> dict[str, Any]:
         raise ValueError(f"unknown change_id {change_id!r}")
     if not change.reversible:
         raise ValueError(f"change {change_id!r} is not reversible")
+    control = _require_control(ctx)
+    applied = control.rollback_config_change(change_id)
     ctx.notifications.append(
         {
             "channel": "deploy",
@@ -132,10 +140,32 @@ def rollback_change(ctx: ToolContext, change_id: str) -> dict[str, Any]:
             "change_id": change_id,
             "component": change.component,
             "rollback_requested": True,
-            "partial_effect": True,
-            "note": "Rollback dispatched to the owning team; recovery depends on redeploy time.",
+            "already_rolled_back": applied["already_rolled_back"],
+            "note": "Change reverted; traffic affected by it recovers from this point.",
         },
-        "inverse_action": None,
+        "inverse_action": {
+            "tool": "restore_change",
+            "arguments": {"change_id": change_id},
+        },
+    }
+
+
+def restore_change(ctx: ToolContext, change_id: str) -> dict[str, Any]:
+    """Re-apply a configuration change, undoing a rollback.
+
+    Exists so `rollback_change` is reversible on the same terms as every other write tool: if
+    reverting the deploy does not help, the agent can put it back rather than leaving the merchant
+    in a third state nobody chose.
+    """
+    control = _require_control(ctx)
+    control.restore_config_change(change_id)
+    return {
+        "adapter": ADAPTER,
+        "detail": {"change_id": change_id, "restored": True},
+        "inverse_action": {
+            "tool": "rollback_change",
+            "arguments": {"change_id": change_id},
+        },
     }
 
 
@@ -251,7 +281,18 @@ SPECS = [
         parameters={"change_id": {"type": "string", "required": True}},
         func=rollback_change,
         write=True,
-        inverse=None,
+        inverse="restore_change",
+    ),
+    ToolSpec(
+        name="restore_change",
+        description=(
+            "Re-apply a configuration change that was rolled back. The inverse of "
+            "rollback_change, used when the rollback did not help."
+        ),
+        parameters={"change_id": {"type": "string", "required": True}},
+        func=restore_change,
+        write=True,
+        inverse="rollback_change",
     ),
     ToolSpec(
         name="set_monitoring_frequency",

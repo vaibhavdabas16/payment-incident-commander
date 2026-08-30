@@ -59,6 +59,10 @@ class ActionType(str, Enum):
     DISABLE_PAYMENT_METHOD = "disable_payment_method"
     CONFIGURE_RETRY = "configure_retry"
     ROLLBACK_CHANGE = "rollback_change"
+    # The inverse of ROLLBACK_CHANGE. Never proposed by the reasoner - it exists so that reverting
+    # a configuration rollback is expressible, which is what makes that action reversible like
+    # every other write.
+    RESTORE_CHANGE = "restore_change"
     SET_MONITORING_FREQUENCY = "set_monitoring_frequency"
     NOTIFY_MERCHANT = "notify_merchant"
     CREATE_INCIDENT_TICKET = "create_incident_ticket"

@@ -150,8 +150,17 @@ mean confidence when wrong, and the Brier score improved, but the margin is smal
 still mediocre. A calibrator fitted over more scenarios would do better; at this corpus size it
 would mostly encode the simulator's quirks.
 
-**Reverting a config rollback does not work, and that is a simulator limit rather than an agent
-defect.** The harness now models an operator granting the approval the gateway asks for, so runs
+**Reverting a config rollback now works.** It previously could not: `rollback_change` recorded
+intent and the simulator kept degrading traffic regardless, so the one action that actually
+addresses a config regression was guaranteed to look useless. Verification read no improvement and
+the agent dutifully reverted its own correct fix - every failed rollback in the benchmark was one
+of these, which made the metric a statement about the simulator rather than about the agent. The
+control plane now honours the rollback: a degradation caused by a recorded change stops when that
+change is reverted, and the action carries a real inverse so it is reversible like any other
+write. `SCN-ANDROID` now recovers on all three seeds, rollback success is 1.0 of 7, and
+unnecessary escalation fell to zero.
+
+**Historical note on the same metric.** The harness now models an operator granting the approval the gateway asks for, so runs
 continue past the gate instead of stopping there. That raised verification coverage from 3 runs to
 18 and rollbacks from 1 to 11 - and the honest rollback success rate is 0.45, not the 1.0 that a
 single sample used to report.

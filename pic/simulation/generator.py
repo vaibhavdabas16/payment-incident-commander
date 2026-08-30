@@ -108,6 +108,11 @@ class Intervention:
     active: bool = True
 
 
+def _change_id_for(scenario: Scenario) -> str:
+    """The id of the configuration change a scenario records, if it records one."""
+    return f"chg_{scenario.scenario_id.lower()}"
+
+
 @dataclass
 class ControlPlane:
     """Live routing/retry configuration. The Action Agent's write tools mutate this object."""
@@ -118,6 +123,10 @@ class ControlPlane:
     retry_enabled: bool = True
     monitoring_interval_s: int = 120
     interventions: list[Intervention] = field(default_factory=list)
+    # Configuration changes the agent has reverted. A scenario whose degradation was caused by a
+    # recorded change stops applying once that change is rolled back, so reverting a bad deploy
+    # actually fixes the thing it broke.
+    rolled_back_changes: set[str] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         if not self.route_weights:
@@ -169,8 +178,27 @@ class ControlPlane:
         self.retry_enabled = enabled
         return {"before": before, "after": {"max_retries": max_retries, "retry_enabled": enabled}}
 
+    def rollback_config_change(self, change_id: str) -> dict:
+        """Revert a merchant configuration change.
+
+        Previously this was recorded as intent only: the simulator kept degrading traffic no
+        matter what the agent did, so the one action that could actually fix a config regression
+        was guaranteed to look useless. Verification then read no improvement and the agent
+        reverted its own correct fix - which is why every failed rollback in the benchmark was a
+        `rollback_change`.
+        """
+        before = change_id in self.rolled_back_changes
+        self.rolled_back_changes.add(change_id)
+        return {"change_id": change_id, "already_rolled_back": before}
+
+    def restore_config_change(self, change_id: str) -> dict:
+        """Re-apply a change, so reverting a rollback is itself reversible."""
+        self.rolled_back_changes.discard(change_id)
+        return {"change_id": change_id, "restored": True}
+
     def snapshot(self) -> dict:
         return {
+            "rolled_back_changes": sorted(self.rolled_back_changes),
             "route_weights": {m: dict(w) for m, w in self.route_weights.items()},
             "disabled_methods": sorted(self.disabled_methods),
             "max_retries": self.max_retries,
@@ -277,7 +305,7 @@ class PaymentSimulator:
         self.ground_truth.setdefault(scenario.scenario_id, GroundTruthAccumulator())
         if scenario.config_change:
             change = ConfigChange(
-                change_id=f"chg_{scenario.scenario_id.lower()}",
+                change_id=_change_id_for(scenario),
                 timestamp=at - timedelta(seconds=scenario.config_change_lead_s),
                 merchant_id=self.config.merchant_id,
                 component=scenario.config_change["component"],
@@ -294,6 +322,10 @@ class PaymentSimulator:
     def _live_scenarios(self, ts: datetime) -> list[tuple[Scenario, float]]:
         out = []
         for a in self.active:
+            # A degradation caused by a configuration change ends when that change is reverted.
+            # Without this the simulator punished the correct fix.
+            if a.scenario.config_change and _change_id_for(a.scenario) in self.control.rolled_back_changes:
+                continue
             elapsed = (ts - a.started_at).total_seconds()
             intensity = a.scenario.intensity(elapsed)
             if intensity > 0:

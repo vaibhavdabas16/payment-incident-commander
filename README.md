@@ -149,13 +149,13 @@ Produced by `python -m pic.evaluation.harness` on the **deterministic** reasoner
 | Unauthorised executions | **0** |
 | Tool-call success rate | 1.0 |
 | Appropriate action rate | 0.8636 |
-| Rollback success rate | 0.4 (10 attempted) |
+| Rollback success rate | 1.0 (7 attempted) |
 | Escalation rate (unnecessary) | 0.7778 (0.0) |
 
 | Business impact | |
 |---|---|
-| Median absolute revenue-estimate error | 39.0% |
-| Estimates within 25% / 50% | 0.375 / 0.5833 |
+| Median absolute revenue-estimate error | 37.2% |
+| Estimates within 25% / 50% | 0.375 / 0.625 |
 | Median time to mitigate (from onset) | 134.0s |
 
 **Versus a human baseline** — a parameterised model of an on-call payments engineer, not a measurement. Its assumptions are stated in [docs/EVALUATION.md](docs/EVALUATION.md) and are deliberately generous to the human.
@@ -277,10 +277,11 @@ docs/                 ARCHITECTURE · DECISIONS · EVALUATION · DEMO
   autonomous-action floor than before, because they were previously clearing it on overstated
   confidence. The floor was not lowered to recover the numbers; `approval_required_rate` reports
   how often a human is asked.
-- **Reverting a config rollback does not work.** Measuring past the approval gate raised rollbacks
-  from 1 to 11 and showed the real success rate is 0.45, not the 1.0 a single sample reported. The
-  split is exact: every `shift_traffic` revert succeeded, and every failure is `rollback_change`,
-  where the simulator cannot un-deploy an SDK so there is nothing to undo.
+- **`rollback_change` is now simulated, not just recorded.** It used to dispatch intent while the
+  simulator kept degrading traffic, so the correct fix for a config regression could never show a
+  recovery and the agent reverted its own correct action. Reverting a recorded change now stops the
+  degradation it caused. Rollback success is 1.0 of 7, and the remaining failed verifications are
+  genuine failed interventions rather than an artefact.
 - **Nine scenarios is a small corpus.** Accuracy figures carry wide confidence intervals.
 - **Revenue estimates are noisy early in an incident, but no longer biased.** They used to be
   systematically low - 21 of 24 runs under-estimated, by 42% at the median - because valuation
