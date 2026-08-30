@@ -169,7 +169,7 @@ export default function App() {
             />
           )}
 
-          <Tiles metrics={metrics} />
+          <Tiles metrics={metrics} series={series} />
 
           {focused ? (
             <>
@@ -652,7 +652,37 @@ function Topbar({ metrics, status, view, setView }) {
   )
 }
 
-function Tiles({ metrics }) {
+/** A sparkline drawn by hand rather than pulled from a charting library: seven-odd points of
+ *  recent history, so a tile shows direction and not only level. */
+function Sparkline({ points, tone = 'neutral', width = 132, height = 30 }) {
+  const values = (points || [])
+    .filter((p) => p.transactions > 0)
+    .slice(-24)
+    .map((p) => p.success_rate)
+  if (values.length < 2) return null
+  const lo = Math.min(...values)
+  const hi = Math.max(...values)
+  const span = hi - lo || 1
+  const step = width / (values.length - 1)
+  const y = (v) => height - 3 - ((v - lo) / span) * (height - 6)
+  const line = values.map((v, i) => `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(' ')
+  const area = `${line} L${width},${height} L0,${height} Z`
+  const id = `spark-${tone}`
+  return (
+    <svg className={`spark ${tone}`} width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="currentColor" stopOpacity="0.28" />
+          <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill={`url(#${id})`} />
+      <path d={line} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+function Tiles({ metrics, series }) {
   const deviation = metrics?.deviation ?? 0
   const down = deviation < -0.005
   return (
@@ -660,10 +690,11 @@ function Tiles({ metrics }) {
       <div className="tile">
         <span className="label">Payment success</span>
         <span className="value">{formatPct(metrics?.success_rate)}</span>
-        <span className={`foot delta ${down ? 'down' : 'up'}`}>
-          {down ? '▼' : '▲'} {formatPct(Math.abs(deviation), 1)} vs baseline{' '}
-          {formatPct(metrics?.baseline_success_rate)}
+        <span className={`foot trend ${down ? 'down' : 'up'}`}>
+          <i className="dot" />
+          {formatPct(Math.abs(deviation), 1)} vs baseline {formatPct(metrics?.baseline_success_rate)}
         </span>
+        <Sparkline points={series} tone={down ? 'down' : 'up'} />
       </div>
       <div className="tile">
         <span className="label">Revenue at risk</span>

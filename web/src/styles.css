@@ -1030,3 +1030,39 @@ body {
 
 .walk-body .grid { margin-top: 18px; }
 .walk-body .story { background: var(--surface-0); }
+
+/* ------------------------------------------------ data-dense metric tiles */
+
+/* Borrowed from the reference: monospace for every data value, trend as a coloured dot and a
+ * delta rather than a badge, a hand-drawn sparkline so a tile carries direction as well as level,
+ * and depth from borders alone. The dark palette stays - this is an operations console, and the
+ * chart, severity and status colours are already validated against it. */
+.tile { position: relative; }
+
+.tile .value { font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+
+.foot.trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A status indicator is a dot, never a pill. */
+.foot.trend .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+.foot.trend.up { color: var(--status-good); }
+.foot.trend.down { color: var(--status-critical); }
+
+.spark { display: block; margin-top: 10px; }
+.spark.up { color: var(--status-good); }
+.spark.down { color: var(--status-critical); }
+.spark.neutral { color: var(--series-1); }
