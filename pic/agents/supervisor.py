@@ -98,6 +98,7 @@ class IncidentSupervisor:
         control: Any = None,
         emit: Callable[[str, dict[str, Any]], None] | None = None,
         step_cost_s: float | None = None,
+        step_pause_s: float = 0.0,
     ) -> None:
         self.store = store
         self.detector = detector
@@ -114,6 +115,8 @@ class IncidentSupervisor:
         # simulated clock depend on how busy the machine is, so the same seed advances different
         # distances on a loaded box and borderline runs change outcome between runs.
         self.step_cost_s = step_cost_s
+        # Real-time pacing for the live dashboard only; see IncidentContext.step_pause_s.
+        self.step_pause_s = step_pause_s
 
         self.detection_agent = DetectionAgent()
         self.investigation_agent = InvestigationAgent()
@@ -146,6 +149,7 @@ class IncidentSupervisor:
             memory=self.memory,
             control=self.control,
             emit=self.emit,
+            step_pause_s=self.step_pause_s,
             charge_time=(
                 self.clock.advance
                 if self.step_cost_s is None

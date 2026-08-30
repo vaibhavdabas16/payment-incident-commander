@@ -41,6 +41,10 @@ class IncidentContext:
     emit: Callable[[str, dict[str, Any]], None] | None = None
     # Advances simulated time to account for how long an agent step really took.
     charge_time: Callable[[float], None] | None = None
+    # Real seconds to pause after each step, so a person watching can follow the pipeline. Zero
+    # everywhere except the live dashboard: it costs wall-clock time and nothing else, and must
+    # never slow the benchmark or the tests.
+    step_pause_s: float = 0.0
     scratch: dict[str, Any] = field(default_factory=dict)
 
     def publish(self, kind: str, payload: dict[str, Any]) -> None:
@@ -130,6 +134,10 @@ class Agent(ABC):
             reasoner=result.reasoner,
         )
         ctx.incident.steps.append(step)
+        if ctx.step_pause_s:
+            # Simulated waits are instantaneous, so without this the whole pipeline finishes in
+            # milliseconds and a viewer sees the answer without ever seeing the work.
+            time.sleep(ctx.step_pause_s)
         ctx.publish(
             "agent_finished",
             {

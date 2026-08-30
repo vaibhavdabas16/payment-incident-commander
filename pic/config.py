@@ -44,6 +44,16 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 @dataclass
 class DetectionConfig:
     """Thresholds for the deterministic detector (ADR-001)."""
@@ -166,6 +176,10 @@ class Settings:
     max_intervention_attempts: int = 2
     # Wall-clock seconds the simulator advances per real second in live mode.
     live_speedup: float = 60.0
+    # Real seconds the live dashboard pauses between agent steps. Simulated waits are instant, so
+    # without a pace the pipeline completes in milliseconds and a visitor sees the verdict without
+    # ever seeing the work. Benchmarks and tests leave this at zero.
+    live_step_pause_s: float = _env_float("PIC_LIVE_STEP_PAUSE_S", 0.8)
     verbose: bool = field(default_factory=lambda: _env_bool("PIC_VERBOSE", False))
 
 

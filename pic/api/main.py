@@ -61,7 +61,13 @@ class Hub:
 
 
 hub = Hub()
-engine = Engine(EngineConfig(reasoner=None), emit=hub.publish)
+# The live dashboard paces itself between agent steps. Simulated waits are instantaneous, so
+# without this the pipeline finishes in milliseconds and a visitor watching the walkthrough sees
+# the verdict without ever seeing the work that produced it.
+engine = Engine(
+    EngineConfig(reasoner=None, step_pause_s=settings.live_step_pause_s),
+    emit=hub.publish,
+)
 _sim_task: asyncio.Task | None = None
 _state = {"running": False, "speedup": settings.live_speedup}
 

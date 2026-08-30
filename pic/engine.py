@@ -41,6 +41,8 @@ class EngineConfig:
     # Fixed simulated seconds per agent step. `None` charges measured wall time (live use); the
     # evaluation harness pins it so a run does not depend on how fast the machine is.
     step_cost_s: float | None = None
+    # Real seconds to pause between agent steps so a viewer can follow along. Live use only.
+    step_pause_s: float = 0.0
     start_time: datetime = field(
         default_factory=lambda: datetime(2026, 8, 24, 10, 0, 0, tzinfo=timezone.utc)
     )
@@ -85,6 +87,7 @@ class Engine:
             control=self.simulator.control,
             emit=self._emit,
             step_cost_s=self.config.step_cost_s,
+            step_pause_s=self.config.step_pause_s,
         )
 
     # ---------------------------------------------------------------- events
