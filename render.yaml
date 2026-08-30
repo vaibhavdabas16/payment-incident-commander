@@ -1,0 +1,20 @@
+# Render blueprint. Render is used rather than Vercel because this is not a static site: the API
+# holds a live simulation in memory, advances it on a background asyncio task, and streams agent
+# events over a WebSocket. Vercel's Python runtime is serverless — the background task would not
+# survive between invocations, incident state would not persist, and the event stream would not
+# connect at all, so the dashboard would render empty.
+services:
+  - type: web
+    name: payment-incident-commander
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Deliberately no GEMINI_API_KEY. Without one the system falls back to the deterministic
+      # reasoner, which is what the published benchmark uses, runs an incident in seconds rather
+      # than minutes, and keeps the demo reproducible for anyone who opens the link.
+      - key: PIC_LLM_PROVIDER
+        value: auto

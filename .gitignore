@@ -11,6 +11,10 @@ venv/
 *.sqlite3
 evaluation/results/*.json
 !evaluation/results/.gitkeep
+# ...except the published run. The deployed dashboard reads this file to render the Benchmark
+# tab, and it is the same file the README numbers are generated from, so shipping it keeps the
+# hosted page and the README telling one story. Regenerate both together.
+!evaluation/results/latest.json
 
 node_modules/
 web/dist/
