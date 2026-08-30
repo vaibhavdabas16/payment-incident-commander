@@ -135,11 +135,27 @@ human's is dominated by investigation, which is not.
 
 Reported rather than tuned away.
 
-**Confidence calibration is the weakest metric.** Mean confidence when the diagnosis is correct is
-close to mean confidence when it is wrong, and the Brier score reflects that. The scores come from a
-readable additive rule, not a fitted model, and nothing has been calibrated against outcomes. A
-fitted calibrator over more scenarios would improve this; at this corpus size it would mostly encode
-the simulator's quirks.
+**Confidence is only roughly calibrated.** It used to be *inverted* - the agent was on average
+more certain when it was wrong than when it was right, which is the worst possible shape for a
+number that gates autonomous action. That came from nothing tying the strength of a claim to the
+share of the failures it explained: one run asserted a payment-method fault at 77% confidence on a
+segment carrying 24% of the failures.
+
+Confidence is now capped by explanatory coverage - a segment-level cause cannot be stated more
+confidently than the failures its segment carries, plus a small allowance for the same fault
+appearing in several segments. This is a consistency rule, not a calibration: it never looks at
+whether the diagnosis was right, only at whether the evidence supports the strength of the claim,
+and it runs after ranking so it cannot reorder hypotheses. Mean confidence when correct now exceeds
+mean confidence when wrong, and the Brier score improved, but the margin is small and the score is
+still mediocre. A calibrator fitted over more scenarios would do better; at this corpus size it
+would mostly encode the simulator's quirks.
+
+**The benchmark stops measuring at the approval gate.** Most scenarios end in
+`AWAITING_HUMAN_APPROVAL`, which is scored as the agent stopping safely - correct, but it means
+execution, verification and rollback go unmeasured for those runs, and `rollback_success_rate` can
+report nothing at all. Those paths are covered by the end-to-end tests, which approve and then
+assert the revert, and by the live dashboard. Measuring past the gate would need the harness to
+model an approving operator.
 
 **Revenue estimates are noisy on short windows.** Order amounts are lognormal with a long tail, so a
 two-minute estimate carries real sampling error. The Impact Agent measures from incident onset and
@@ -154,8 +170,10 @@ amounts, diurnal arrival rates, correlated segments, ramped degradations, retrie
 that responds to actions — but a real merchant's traffic will surface failure modes it does not
 contain.
 
-**`SCN-UPI-PSP-BADFALLBACK` is scored as a diagnosis failure and that is intentional.** All UPI
-providers degrade together; the evidence still points at the worst-looking one, so the system
-diagnoses a PSP fault, acts, and is wrong. Counting that as correct because the *response* was
-well-handled would be marking our own homework. The response is scored separately, under
-`appropriate_action_rate` and `rollback_success_rate`.
+**`SCN-UPI-PSP-BADFALLBACK` is now diagnosed correctly on two of three seeds.** All UPI providers
+degrade together, and the whole-method hypothesis used to be unreachable because it demanded a
+concentration ratio the largest payment method cannot reach even when it is wholly at fault. With
+that bar aligned to the module's own `strong_dimensions` test, the method-level cause wins on two
+seeds. On the third an issuer lands at a concentration of exactly 1.25 against a `< 1.25`
+threshold, is judged an independent second fault, and the provider-level explanation wins instead.
+That constant was left alone: moving it to 1.26 would fix the seed and demonstrate nothing.

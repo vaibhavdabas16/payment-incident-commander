@@ -35,6 +35,11 @@ MAX_MEMORY_ADJUSTMENT = 0.15
 # but weakly supported hypothesis cannot reach certainty. See `_to_hypotheses`.
 MIN_EVIDENCE_MASS = 0.9
 
+# How far above its explanatory coverage a segment-level diagnosis may be stated. One fault often
+# surfaces across several segments, so the single best segment understates it - but only by so
+# much. See `_explanatory_coverage`.
+COVERAGE_ALLOWANCE = 0.15
+
 
 @dataclass
 class CauseFeatures:
@@ -328,6 +333,25 @@ def score_hypotheses(f: CauseFeatures) -> dict[str, tuple[float, list[str]]]:
     return {k: (max(0.0, min(1.0, v[0])), v[1]) for k, v in scores.items()}
 
 
+def _explanatory_coverage(bundle: EvidenceBundle, cause_id: str) -> float | None:
+    """Share of all failures carried by the best segment this hypothesis is about.
+
+    `None` when coverage is not a meaningful question for the cause: `config_regression` is
+    evidenced by a change record rather than by a segment, so it has no failure share to be
+    judged against and must not be capped by one.
+    """
+    spec = HYPOTHESIS_CATALOGUE.get(cause_id)
+    if spec is None:
+        return None
+    dimensions = set(spec.dimensions)
+    shares = [
+        float(f.metrics["failure_share"])
+        for f in bundle.findings
+        if f.dimension in dimensions and f.metrics.get("failure_share") is not None
+    ]
+    return max(shares) if shares else None
+
+
 def _independent_dimensions(f: CauseFeatures) -> set[str]:
     """Strong dimensions that are not aliases of one another.
 
@@ -428,6 +452,19 @@ class RootCauseAgent(Agent):
         confidence = top.probability
         if bundle.degraded:
             confidence = min(confidence, 0.5)
+
+        # Explanatory coverage caps it too. A segment-level cause is the claim that one slice of
+        # traffic is responsible, so it cannot honestly be stated more confidently than the share
+        # of the failures that slice actually carries. Without this the agent reported 77%
+        # confidence in a payment-method fault whose segment held a quarter of the failures -
+        # a claim the evidence never made.
+        #
+        # This is a consistency rule, not a calibration fitted to outcomes: it never looks at
+        # whether the diagnosis turned out right, only at whether the evidence supports the
+        # strength of the claim. It runs after ranking, so it cannot reorder hypotheses.
+        cover = _explanatory_coverage(bundle, top.cause_id)
+        if cover is not None:
+            confidence = min(confidence, cover + COVERAGE_ALLOWANCE)
 
         assessment = RootCauseAssessment(
             incident_id=ctx.incident.incident_id,

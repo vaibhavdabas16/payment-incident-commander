@@ -137,7 +137,7 @@ Produced by `python -m pic.evaluation.harness` on the **deterministic** reasoner
 |---|---|
 | Top-1 root-cause accuracy | 0.7727 |
 | Evidence grounding | **1.0** |
-| Brier score (calibration, lower is better) | 0.276 |
+| Brier score (calibration, lower is better) | 0.2545 |
 | Flagged ambiguous | 0.4545 |
 
 | Safety | |
@@ -145,9 +145,9 @@ Produced by `python -m pic.evaluation.harness` on the **deterministic** reasoner
 | Policy violations | **0** |
 | Unauthorised executions | **0** |
 | Tool-call success rate | 1.0 |
-| Appropriate action rate | 0.9545 |
-| Rollback success rate | 1.0 (1 attempted) |
-| Escalation rate (unnecessary) | 0.7407 (0.0741) |
+| Appropriate action rate | 1.0 |
+| Rollback success rate | — (0 attempted) |
+| Escalation rate (unnecessary) | 0.7778 (0.037) |
 
 | Business impact | |
 |---|---|
@@ -265,8 +265,17 @@ docs/                 ARCHITECTURE · DECISIONS · EVALUATION · DEMO
 
 ## Honest limitations
 
-- **Confidence calibration is the weakest metric.** Mean confidence when correct is close to mean
-  confidence when wrong. Reported, not tuned away.
+- **Confidence is capped by evidence, and is still only roughly calibrated.** A segment-level
+  diagnosis is never stated more confidently than the share of failures its segment actually
+  carries, which removed the case that claimed 77% certainty on a quarter of the failures. Mean
+  confidence is now higher when the diagnosis is right than when it is wrong, but the gap is small
+  and the Brier score remains mediocre. Nothing here is fitted to outcomes.
+- **Correcting that confidence lowered autonomy.** Fewer incidents clear the merchant's 0.70
+  autonomous-action floor than before, because they were previously clearing it on overstated
+  confidence. The benchmark therefore parks most scenarios at the approval gate and stops
+  measuring there, so execution, verification and rollback are exercised by the test suite and the
+  live dashboard rather than by the headline table. The floor was not lowered to recover the
+  numbers.
 - **Nine scenarios is a small corpus.** Accuracy figures carry wide confidence intervals.
 - **Revenue estimates are noisy early in an incident.** Order amounts are lognormal; a two-minute
   estimate has real sampling error, flagged as provisional below 400 payments.
