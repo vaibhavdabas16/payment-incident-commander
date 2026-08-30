@@ -407,23 +407,32 @@ class Detector:
         if window_hours <= 0:
             return 0
 
+        # Fetched without a volume floor so that thin strata can be *pooled* rather than dropped.
+        # Discarding them was costing most of the estimate: on a two-minute window a
+        # (method x value-band) cell often holds fewer than twenty payments, and the cells below
+        # that floor carried more of the true loss than the cells above it - three times as much
+        # on some runs. That is why the reported figure was a systematic under-estimate, roughly
+        # 42% low at the median, always in the direction of telling the merchant less is at stake.
         strata = self.store.cross_segment_stats(
             start,
             end,
             ("payment_method", "amount_band"),
             baseline_start=base.start,
             baseline_end=base.end,
-            min_volume=self.config.min_stratum_volume,
+            min_volume=1,
         )
 
         total = 0.0
+        # Sub-threshold strata, accumulated as one group. The partition is disjoint, so pooling is
+        # sound, and the combined volume is what makes the deviation meaningful: individually
+        # these cells are far too noisy to value, together they are not.
+        pooled_total = pooled_successes = 0
+        pooled_baseline_total = pooled_baseline_successes = 0
+        pooled_value_paise = 0.0
+        pooled_value_n = 0
+
         for stratum in strata:
             if stratum.deviation is None or stratum.deviation >= 0 or stratum.baseline_total == 0:
-                continue
-            test = two_proportion_ztest(
-                stratum.successes, stratum.total, stratum.baseline_successes, stratum.baseline_total
-            )
-            if test.p_value > self.config.stratum_significance_level:
                 continue
             baseline_value = self.store.union_metric_window(
                 base.start, base.end, [stratum.segment]
@@ -433,8 +442,41 @@ class Detector:
             avg_value = (
                 baseline_value.gmv_paise + baseline_value.failed_gmv_paise
             ) / baseline_value.total
+
+            if stratum.total < self.config.min_stratum_volume:
+                pooled_total += stratum.total
+                pooled_successes += stratum.successes
+                pooled_baseline_total += stratum.baseline_total
+                pooled_baseline_successes += stratum.baseline_successes
+                pooled_value_paise += baseline_value.gmv_paise + baseline_value.failed_gmv_paise
+                pooled_value_n += baseline_value.total
+                continue
+
+            test = two_proportion_ztest(
+                stratum.successes, stratum.total, stratum.baseline_successes, stratum.baseline_total
+            )
+            if test.p_value > self.config.stratum_significance_level:
+                continue
             excess_failures_per_hour = abs(stratum.deviation) * stratum.total / window_hours
             total += excess_failures_per_hour * avg_value
+
+        # The pooled remainder faces the same significance bar, which is the guard against
+        # one-sided noise: on a healthy window the pooled deviation is not reliably negative and
+        # contributes nothing.
+        if pooled_total > 0 and pooled_baseline_total > 0 and pooled_value_n > 0:
+            pooled_rate = pooled_successes / pooled_total
+            pooled_baseline_rate = pooled_baseline_successes / pooled_baseline_total
+            pooled_drop = pooled_baseline_rate - pooled_rate
+            if pooled_drop > 0:
+                test = two_proportion_ztest(
+                    pooled_successes,
+                    pooled_total,
+                    pooled_baseline_successes,
+                    pooled_baseline_total,
+                )
+                if test.p_value <= self.config.stratum_significance_level:
+                    avg_value = pooled_value_paise / pooled_value_n
+                    total += pooled_drop * pooled_total / window_hours * avg_value
 
         _ = segments  # attribution is reported separately; valuation must stay on the partition
         return int(total)

@@ -126,41 +126,41 @@ Produced by `python -m pic.evaluation.harness` on the **deterministic** reasoner
 
 | Detection | |
 |---|---|
-| Precision | **0.994** |
-| Recall | 0.763 |
-| F1 | 0.864 |
-| False positives | **6 of 582** healthy windows |
+| Precision | **0.995** |
+| Recall | 0.773 |
+| F1 | 0.870 |
+| False positives | **5 of 582** healthy windows |
 | Scenarios detected | 24/24 |
 | Median detection latency | 120.0s |
 
 | Diagnosis | |
 |---|---|
-| Top-1 root-cause accuracy | 0.7826 |
+| Top-1 root-cause accuracy | 0.8182 |
 | Evidence grounding | **1.0** |
-| Brier score (calibration, lower is better) | 0.2542 |
-| Flagged ambiguous | 0.4783 |
+| Brier score (calibration, lower is better) | 0.2686 |
+| Flagged ambiguous | 0.4545 |
 
 | Safety | |
 |---|---|
 | Policy violations | **0** |
 | Unauthorised executions | **0** |
 | Tool-call success rate | 1.0 |
-| Appropriate action rate | 0.8261 |
-| Rollback success rate | 0.4545 (11 attempted) |
-| Escalation rate (unnecessary) | 0.8148 (0.037) |
+| Appropriate action rate | 0.8636 |
+| Rollback success rate | 0.4 (10 attempted) |
+| Escalation rate (unnecessary) | 0.7778 (0.0) |
 
 | Business impact | |
 |---|---|
-| Median absolute revenue-estimate error | 47.1% |
-| Estimates within 25% / 50% | 0.1667 / 0.5417 |
-| Median time to mitigate (from onset) | 127.0s |
+| Median absolute revenue-estimate error | 39.0% |
+| Estimates within 25% / 50% | 0.375 / 0.5833 |
+| Median time to mitigate (from onset) | 134.0s |
 
 **Versus a human baseline** — a parameterised model of an on-call payments engineer, not a measurement. Its assumptions are stated in [docs/EVALUATION.md](docs/EVALUATION.md) and are deliberately generous to the human.
 
 | | This system | Human model | |
 |---|---|---|---|
 | Detection | 120.0s | 540s | 4.5× |
-| Mitigation | 127.0s | 1620s | 12.8× |
+| Mitigation | 134.0s | 1620s | 12.1× |
 
 <!-- BENCHMARK:END -->
 
