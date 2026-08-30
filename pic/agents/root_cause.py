@@ -285,7 +285,13 @@ def score_hypotheses(f: CauseFeatures) -> dict[str, tuple[float, list[str]]]:
 
     # --- Whole payment method ---------------------------------------------
     s, why = 0.0, []
-    if f.conc("payment_method") >= 1.4 and f.dev("payment_method") >= 0.10:
+    # The concentration bar matches `strong_dimensions` above, and for the same reason stated
+    # there: a slice carrying most of the traffic cannot show a high concentration ratio even when
+    # it is entirely responsible. UPI is the largest payment method, so a rails-wide UPI failure
+    # tops out near 1.3x - under the old 1.4 bar this hypothesis scored exactly 0.0 on the one
+    # scenario built to test it, and the diagnosis defaulted to a single PSP on error-code
+    # evidence alone, with no concentration evidence behind it at all.
+    if f.conc("payment_method") >= 1.15 and f.dev("payment_method") >= 0.10:
         s += 0.35 * min(1.0, f.conc("payment_method") / 2.5) + 0.30 * min(1.0, f.dev("payment_method") / 0.30)
         why.append("one payment method is degraded overall")
         # Only a broad method fault if no single provider inside it explains it. The bar matches

@@ -246,3 +246,27 @@ def test_a_fault_nested_inside_the_primary_segment_is_not_filed_as_its_echo():
     if region is not None:
         assert region.metrics["independent"] is False
         assert region.metrics.get("echo_of") == {"payment_method": "card"}
+
+
+def test_a_method_wide_failure_is_not_blamed_on_its_largest_provider():
+    """The biggest payment method cannot look concentrated, even when it is entirely at fault.
+
+    SCN-UPI-PSP-BADFALLBACK degrades every UPI PSP at once - an upstream rails problem, not a
+    provider problem. Concentration is failure share over traffic share, so the largest method on
+    the platform tops out near 1.3x even when it is wholly responsible. The whole-method hypothesis
+    required 1.4x and therefore scored exactly 0.0 on the one scenario built to test it, leaving a
+    single PSP to win on error-code evidence alone with no concentration evidence behind it - and
+    the resulting fix is a reroute that cannot possibly help, because every route is degraded.
+
+    The bar now matches the `strong_dimensions` test in the same module, which is set low for
+    precisely this reason.
+    """
+    engine, incident = _run("SCN-UPI-PSP-BADFALLBACK", seed=7)
+    assert incident.root_cause is not None
+    assert incident.root_cause.cause_id == "payment_method_degradation"
+
+    # It works because every provider inside the method is judged an echo of the method itself:
+    # excluding UPI leaves each PSP healthy, so no single provider is the better explanation.
+    psp_findings = [f for f in incident.evidence.findings if f.dimension == "psp"]
+    assert psp_findings, "expected PSP evidence to exist and be considered"
+    assert all(f.metrics.get("independent") is False for f in psp_findings)

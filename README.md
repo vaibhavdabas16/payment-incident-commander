@@ -135,9 +135,9 @@ Produced by `python -m pic.evaluation.harness` on the **deterministic** reasoner
 
 | Diagnosis | |
 |---|---|
-| Top-1 root-cause accuracy | 0.6818 |
+| Top-1 root-cause accuracy | 0.7727 |
 | Evidence grounding | **1.0** |
-| Brier score (calibration, lower is better) | 0.2765 |
+| Brier score (calibration, lower is better) | 0.276 |
 | Flagged ambiguous | 0.4545 |
 
 | Safety | |
