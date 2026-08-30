@@ -4,6 +4,14 @@ import { api, connectStream, formatINR, formatClock, formatPct, severityClass } 
 
 const POLL_MS = 1500
 
+const VIEW_KEYS = ['command', 'agents', 'benchmark']
+
+/** The open tab lives in the URL hash so a section can be linked to directly. */
+function readView() {
+  const hash = typeof window !== 'undefined' ? window.location.hash.replace('#', '') : ''
+  return VIEW_KEYS.includes(hash) ? hash : 'command'
+}
+
 export default function App() {
   const [metrics, setMetrics] = useState(null)
   const [series, setSeries] = useState([])
@@ -13,6 +21,8 @@ export default function App() {
   const [scenarios, setScenarios] = useState([])
   const [events, setEvents] = useState([])
   const [evaluation, setEvaluation] = useState(null)
+  const [agents, setAgents] = useState([])
+  const [view, setView] = useState(readView)
   const [status, setStatus] = useState('connecting')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -57,8 +67,16 @@ export default function App() {
   }, [refresh])
 
   useEffect(() => {
+    if (readView() !== view) window.location.hash = view
+    const onHash = () => setView(readView())
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [view])
+
+  useEffect(() => {
     api.scenarios().then((d) => setScenarios(d.scenarios)).catch(() => {})
     api.evaluation().then(setEvaluation).catch(() => setEvaluation(null))
+    api.agents().then((d) => setAgents(d.agents)).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -89,7 +107,7 @@ export default function App() {
 
   return (
     <div className="app">
-      <Topbar metrics={metrics} status={status} />
+      <Topbar metrics={metrics} status={status} view={view} setView={setView} />
 
       {error ? (
         <div className="approval" role="alert">
@@ -97,6 +115,14 @@ export default function App() {
           <p>{error}</p>
         </div>
       ) : null}
+
+      {view === 'command' ? (
+        <>
+      <Hero
+        report={evaluation}
+        busy={busy}
+        onDemo={() => act(() => api.trigger('SCN-UPI-PSP-BADFALLBACK'))}
+      />
 
       <Tiles metrics={metrics} />
 
@@ -175,21 +201,160 @@ export default function App() {
           />
         </div>
       </div>
+        </>
+      ) : null}
 
-      <EvaluationPanel report={evaluation} />
+      {view === 'agents' ? <AgentFleet agents={agents} /> : null}
 
-      <p className="note">
-        Every figure on this page is produced by the running system. Benchmark numbers come from{' '}
-        <code>python -m pic.evaluation.harness</code> and are read from its JSON output — none are
-        written by hand.
-      </p>
+      {view === 'benchmark' ? (
+        <>
+          <EvaluationPanel report={evaluation} />
+          <p className="note">
+            Every figure on this page is produced by the running system. Benchmark numbers come
+            from <code>python -m pic.evaluation.harness</code> and are read from its JSON output —
+            none are written by hand.
+          </p>
+        </>
+      ) : null}
+
+      <Footer report={evaluation} />
     </div>
+  )
+}
+
+/* --------------------------------------------------------------- hero/nav */
+
+function Hero({ report, busy, onDemo }) {
+  const d = report?.detection
+  const r = report?.reliability
+  const stats = [
+    {
+      value: d ? formatPct(d.precision, 1) : '—',
+      label: 'detection precision',
+      foot: d
+        ? `${d.false_positives} false positives in ${d.false_positives + d.true_negatives} healthy windows`
+        : 'run the benchmark to populate',
+    },
+    {
+      value: r ? r.policy_violations : '—',
+      label: 'policy violations',
+      foot: 'the model cannot call a write tool',
+    },
+    {
+      value: r ? formatPct(r.rollback_success_rate, 0) : '—',
+      label: 'rollback success',
+      foot: 'failed fixes are undone, not retried',
+    },
+  ]
+  return (
+    <section className="hero">
+      <div className="hero-copy">
+        <span className="eyebrow">Razorpay AI Buildathon · autonomous payment operations</span>
+        <h2>
+          It does not just detect. It acts, <em>checks its own work</em>, and undoes the fix when
+          the fix did not help.
+        </h2>
+        <p>
+          Every action passes a deterministic policy gateway before it runs, and is measured
+          against a concurrent control group after it runs. When the numbers do not improve, the
+          agent reverts its own change and hands the incident to a human rather than declaring
+          victory.
+        </p>
+        <div className="hero-actions">
+          <button className="btn primary lg" disabled={busy} onClick={onDemo}>
+            ▶ Run the failed-intervention demo
+          </button>
+          <span className="hero-hint">
+            injects a network-wide UPI failure that the obvious fix cannot repair
+          </span>
+        </div>
+      </div>
+      <div className="hero-stats">
+        {stats.map((s) => (
+          <div className="hero-stat" key={s.label}>
+            <span className="hs-value">{s.value}</span>
+            <span className="hs-label">{s.label}</span>
+            <span className="hs-foot">{s.foot}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+const PIPELINE = [
+  'observe',
+  'detect',
+  'investigate',
+  'diagnose',
+  'decide',
+  'policy gate',
+  'act',
+  'verify',
+]
+
+function AgentFleet({ agents }) {
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2>Agent fleet</h2>
+        <span className="clock">{agents.length} agents · one responsibility each</span>
+      </div>
+      <div className="panel-body">
+        <div className="pipeline">
+          {PIPELINE.map((step, i) => (
+            <span key={step} className="pipe-step">
+              {step}
+              {i < PIPELINE.length - 1 ? <i className="pipe-arrow">→</i> : null}
+            </span>
+          ))}
+        </div>
+        <div className="agent-grid">
+          {agents.map((a, i) => (
+            <div className={`agent-card ${a.writes ? 'writer' : ''}`} key={a.name}>
+              <div className="a-head">
+                <span className="a-index">{String(i + 1).padStart(2, '0')}</span>
+                <span className="a-name">{a.name.replace(/_/g, ' ')}</span>
+                <span className={`badge ${a.writes ? 'high' : 'good'}`}>
+                  {a.writes ? 'write · gated' : 'read only'}
+                </span>
+              </div>
+              <p className="a-summary">{a.summary}</p>
+              <div className="a-foot">
+                <code>{a.state}</code>
+                <span>timeout {a.timeout_s}s</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function Footer({ report }) {
+  return (
+    <footer className="footer">
+      <span>
+        <strong>Payment Incident Commander</strong> — built for the Razorpay AI Buildathon
+      </span>
+      <span className="footer-right">
+        {report?.reasoner ? `${report.reasoner} reasoner` : 'live simulation'}
+        {report?.seeds ? ` · seeds ${report.seeds.join(', ')}` : ''}
+      </span>
+    </footer>
   )
 }
 
 /* ------------------------------------------------------------------ parts */
 
-function Topbar({ metrics, status }) {
+const VIEWS = [
+  ['command', 'Command Center'],
+  ['agents', 'Agent Fleet'],
+  ['benchmark', 'Benchmark'],
+]
+
+function Topbar({ metrics, status, view, setView }) {
   const agent = metrics?.agent_status || 'Starting…'
   const tone =
     status !== 'connected' ? 'offline' : agent === 'Monitoring' ? '' : agent.includes('Escalated') ? 'alert' : 'busy'
@@ -199,6 +364,18 @@ function Topbar({ metrics, status }) {
         <h1>Payment Command Center</h1>
         <span className="sub">autonomous payment incident response</span>
       </div>
+      <nav className="tabs" aria-label="Sections">
+        {VIEWS.map(([key, label]) => (
+          <button
+            key={key}
+            className={`tab ${view === key ? 'active' : ''}`}
+            aria-current={view === key ? 'page' : undefined}
+            onClick={() => setView(key)}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
       <div className="topbar-right">
         <span className="clock">sim clock {formatClock(metrics?.timestamp)}</span>
         <div className="agent-status">

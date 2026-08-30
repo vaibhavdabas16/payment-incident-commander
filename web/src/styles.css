@@ -611,3 +611,182 @@ body {
   .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .kv dt { margin-top: 6px; }
 }
+
+/* ------------------------------------------------------------------ tabs */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.tab {
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 560;
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.tab:hover:not(.active) { color: var(--text-primary); background: var(--surface-3); }
+.tab.active {
+  background: var(--surface-0);
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+/* ------------------------------------------------------------------ hero */
+
+/* The headline claim leads, because the thing worth knowing about this system in the first five
+ * seconds is that it checks its own work - not any individual metric. */
+.hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 26px;
+  align-items: center;
+  padding: 26px 26px 28px;
+  margin-bottom: 18px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(57, 135, 229, 0.13), transparent 62%),
+    var(--surface-1);
+}
+
+.eyebrow {
+  display: block;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.hero-copy h2 {
+  margin: 0 0 12px;
+  font-size: 25px;
+  line-height: 1.28;
+  letter-spacing: -0.015em;
+  font-weight: 640;
+}
+
+.hero-copy h2 em { font-style: normal; color: var(--series-1); }
+
+.hero-copy p {
+  margin: 0 0 18px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  max-width: 62ch;
+}
+
+.hero-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.btn.lg { padding: 11px 20px; font-size: 13.5px; }
+.hero-hint { font-size: 11.5px; color: var(--text-muted); }
+
+.hero-stats { display: flex; flex-direction: column; gap: 10px; }
+
+.hero-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 15px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+}
+
+.hs-value {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+
+.hs-label { font-size: 11.5px; color: var(--text-secondary); }
+.hs-foot { font-size: 10.5px; color: var(--text-muted); }
+
+@media (max-width: 940px) {
+  .hero { grid-template-columns: minmax(0, 1fr); }
+  .hero-copy h2 { font-size: 21px; }
+}
+
+/* ----------------------------------------------------------- agent fleet */
+
+.pipeline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 13px;
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+
+.pipe-arrow { color: var(--text-muted); font-style: normal; margin-left: 7px; }
+
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 11px;
+}
+
+.agent-card {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  padding: 13px 15px;
+}
+
+/* The one agent that can change anything is marked, because that is the claim worth checking. */
+.agent-card.writer { border-color: rgba(236, 131, 90, 0.45); background: rgba(236, 131, 90, 0.06); }
+
+.a-head { display: flex; align-items: center; gap: 9px; margin-bottom: 7px; }
+.a-index { font-family: var(--mono); font-size: 11px; color: var(--text-muted); }
+.a-name { font-weight: 620; font-size: 13px; text-transform: capitalize; flex: 1; }
+.a-summary { margin: 0 0 10px; font-size: 12px; line-height: 1.6; color: var(--text-secondary); }
+
+.a-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.a-foot code { color: var(--text-secondary); }
+
+/* ---------------------------------------------------------------- footer */
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.footer strong { color: var(--text-secondary); font-weight: 620; }
+.footer-right { font-family: var(--mono); }

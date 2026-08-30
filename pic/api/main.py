@@ -196,6 +196,51 @@ def scenarios() -> dict[str, Any]:
     }
 
 
+# One line per agent for the dashboard's fleet view. The name, state and timeout are read from
+# the live agent objects; only the prose is written here, because the classes carry no docstring
+# to lift it from.
+_AGENT_SUMMARY = {
+    "detection": "Watches the payment stream and opens an incident only when three independent tests agree.",
+    "investigation": "Pulls evidence from read-only tools and separates real second faults from echoes of the first.",
+    "impact": "Prices the degradation per hour over a disjoint traffic partition, showing every step of the derivation.",
+    "root_cause": "Scores hypotheses from the evidence, then lets the reasoner re-rank - never invent - and cites findings.",
+    "decision": "Chooses an action by expected value, and may propose doing nothing.",
+    "action": "The only agent that can call a write tool, and only with a policy decision naming that exact action.",
+    "verification": "Measures the action against a concurrent control group and reports honestly when it did not work.",
+    "escalation": "Hands the incident to a human with the evidence and the reason it stopped.",
+}
+
+
+@app.get("/api/agents")
+def agents() -> dict[str, Any]:
+    """The agent pipeline, in the order the supervisor runs it."""
+    s = engine.supervisor
+    ordered = [
+        s.detection_agent,
+        s.investigation_agent,
+        s.impact_agent,
+        s.root_cause_agent,
+        s.decision_agent,
+        s.action_agent,
+        s.verification_agent,
+        s.escalation_agent,
+    ]
+    return {
+        "agents": [
+            {
+                "name": a.name,
+                "state": a.state.value,
+                "timeout_s": a.timeout_s,
+                # Only the Action Agent holds a write capability, and the tool registry refuses it
+                # without an approving policy decision.
+                "writes": a.name == "action",
+                "summary": _AGENT_SUMMARY.get(a.name, ""),
+            }
+            for a in ordered
+        ]
+    }
+
+
 @app.post("/api/scenarios/{scenario_id}/trigger")
 def trigger(scenario_id: str) -> dict[str, Any]:
     if scenario_id not in SCENARIOS:

@@ -18,6 +18,7 @@ export const api = {
   incidents: () => json('/api/incidents'),
   incident: (id) => json(`/api/incidents/${id}`),
   scenarios: () => json('/api/scenarios'),
+  agents: () => json('/api/agents'),
   trigger: (id) => json(`/api/scenarios/${id}/trigger`, { method: 'POST' }),
   approve: (id) => json(`/api/incidents/${id}/approve`, { method: 'POST' }),
   reject: (id) => json(`/api/incidents/${id}/reject`, { method: 'POST' }),
