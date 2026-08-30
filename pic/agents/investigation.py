@@ -79,6 +79,18 @@ def _label(segment: dict[str, Any]) -> str:
     return ", ".join(f"{k}={v}" for k, v in segment.items())
 
 
+def _provably_disjoint(segment: dict[str, Any], primary: dict[str, str]) -> bool:
+    """True when two segments cannot contain the same payment.
+
+    They are disjoint whenever they name the same dimension with different values: a payment on
+    `payment_method=card` is not a payment on `payment_method=upi`. Sharing no dimension at all
+    proves nothing - the slices may overlap heavily - so that case is left to the residual test.
+    """
+    return any(
+        key in primary and str(value) != str(primary[key]) for key, value in segment.items()
+    )
+
+
 def _deviation_z(observed_rate: float, expected_rate: float, n: int) -> float:
     """Standard-error z-score of an observed success rate against an expected one."""
     if n <= 0:
@@ -106,7 +118,12 @@ class InvestigationAgent(Agent):
         counter = _Counter()
         degraded = False
 
-        window_minutes = max(2, int((anomaly.window_end - anomaly.window_start).total_seconds() // 60))
+        # Normally the detection window. A caller may ask for a wider one - the post-action review
+        # pools everything since onset, because a second fault is often too small to establish in
+        # the two minutes available when the first decision has to be made.
+        window_minutes = ctx.scratch.get("window_minutes") or max(
+            2, int((anomaly.window_end - anomaly.window_start).total_seconds() // 60)
+        )
 
         # --- failure mix -------------------------------------------------
         errors = ctx.call_tool("get_error_distribution", minutes=window_minutes)
@@ -569,6 +586,21 @@ class InvestigationAgent(Agent):
             if _aliases_primary(finding.dimension, primary_dims):
                 finding.metrics["independent"] = True
                 finding.metrics["describes"] = primary_segment
+                continue
+
+            # A segment that shares no traffic with the primary cannot be an echo of it. An echo
+            # exists because the two overlap - `device=mobile` looks degraded during a UPI outage
+            # because UPI is mobile-heavy. Where the two slices disagree on a dimension they both
+            # name, they describe disjoint payments, and no amount of the primary's damage can
+            # reach the candidate.
+            #
+            # The residual test cannot see this. It re-measures the candidate's *dimension*, which
+            # for `card & ICICI` means the issuer across every method - diluted by ICICI's healthy
+            # traffic until it fails the test. That is how the second fault in SCN-MULTI, a
+            # 31-point drop on cards, was filed as an echo of a UPI provider outage.
+            if _provably_disjoint(segment, primary_segment):
+                finding.metrics["independent"] = True
+                finding.metrics["disjoint_from_primary"] = dict(primary_segment)
                 continue
 
             residual = ctx.call_tool(

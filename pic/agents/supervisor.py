@@ -129,6 +129,8 @@ class IncidentSupervisor:
         self._route_health: dict[str, dict[str, float]] = {}
         self._executed_at: dict[str, datetime] = {}
         self._diagnosis_retries: dict[str, int] = {}
+        # Incidents whose diagnosis has already been reviewed once after acting.
+        self._reviewed: set[str] = set()
 
     # ----------------------------------------------------------------- setup
 
@@ -330,6 +332,7 @@ class IncidentSupervisor:
             elif incident.state is IncidentState.ESCALATED:
                 self._step_escalate(incident)
             elif incident.state is IncidentState.RESOLVED:
+                self._review_for_a_second_fault(incident)
                 self._step_learn(incident)
             elif incident.state is IncidentState.LEARNING:
                 self._step_close(incident)
@@ -608,6 +611,74 @@ class IncidentSupervisor:
         if incident.outcome is None:
             incident.outcome = "ESCALATED"
         self._transition(incident, IncidentState.LEARNING)
+
+    def _review_for_a_second_fault(self, incident: IncidentRecord) -> None:
+        """Look again once the action has been taken, with everything the incident has accumulated.
+
+        A second, independent fault frequently cannot be established when the first decision has
+        to be made. `SCN-MULTI` is the case in point: its issuer fault needs roughly six minutes
+        of traffic to clear the significance bar, and the decision happens after two. Waiting for
+        it before deciding would delay mitigating the fault that *is* established - an earlier
+        attempt to do exactly that pushed every incident past its approval and broke the revert
+        path entirely.
+
+        So the review happens *after* acting and verifying. The mitigation timeline is untouched;
+        what improves is the diagnosis handed to the human, which is the thing a second fault
+        actually changes. Evidence is pooled from onset rather than taken from a two-minute
+        window, because pooled evidence grows monotonically with the incident while a sliding
+        window flickers in and out of significance.
+
+        Only a genuine upgrade is kept: if the wider look does not conclude multi-factor, the
+        original diagnosis stands untouched.
+        """
+        if incident.incident_id in self._reviewed:
+            return
+        self._reviewed.add(incident.incident_id)
+        if incident.root_cause is None or incident.anomaly is None:
+            return
+        if incident.root_cause.cause_id == "multi_factor":
+            return
+
+        pooled_minutes = int((self.clock.now() - incident.anomaly.window_start).total_seconds() // 60)
+        if pooled_minutes <= int(
+            (incident.anomaly.window_end - incident.anomaly.window_start).total_seconds() // 60
+        ):
+            return  # nothing has accumulated yet
+
+        before_evidence = incident.evidence
+        before_cause = incident.root_cause
+
+        ctx = self._context(incident)
+        ctx.scratch["window_minutes"] = pooled_minutes
+        self.investigation_agent.execute(ctx)
+        investigation = ctx.scratch.get("investigation_result")
+        if investigation is None or not investigation.ok or investigation.output is None:
+            incident.evidence = before_evidence
+            return
+
+        incident.evidence = investigation.output
+        self.root_cause_agent.execute(ctx)
+        diagnosis = ctx.scratch.get("root_cause_result")
+        revised = diagnosis.output if diagnosis is not None and diagnosis.ok else None
+
+        if revised is None or revised.cause_id != "multi_factor":
+            # No second fault established. Leave the original diagnosis exactly as it was.
+            incident.evidence = before_evidence
+            incident.root_cause = before_cause
+            return
+
+        incident.root_cause = revised
+        if self.emit:
+            self.emit(
+                "diagnosis_revised",
+                {
+                    "incident_id": incident.incident_id,
+                    "from": before_cause.cause_id,
+                    "to": revised.cause_id,
+                    "pooled_window_minutes": pooled_minutes,
+                    "reason": "a second independent fault became established after acting",
+                },
+            )
 
     def _step_learn(self, incident: IncidentRecord) -> None:
         self._transition(incident, IncidentState.LEARNING)

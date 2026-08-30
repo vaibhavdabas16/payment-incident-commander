@@ -324,9 +324,33 @@ def score_hypotheses(f: CauseFeatures) -> dict[str, tuple[float, list[str]]]:
     s, why = 0.0, []
     independent = _independent_dimensions(f)
     if len(independent) >= 2:
-        s += 0.40 + 0.15 * min(2, len(independent) - 2)
+        # Scored from the hypotheses it subsumes rather than a flat prior. Each single cause here
+        # explains one of the independent faults and is silent about the other, so a flat 0.40
+        # meant the strongest partial explanation always outranked the account that covered
+        # everything, and a second fault could never be reported however clear it became.
+        #
+        # Averaging the two keeps a strong fault beside a marginal one reading as a single cause -
+        # which is what it is - while two comparable faults outrank either alone. The independence
+        # comes from the residual test in the investigation, not a magnitude heuristic, so an echo
+        # of the primary cannot inflate it.
+        covered: list[float] = []
+        for group in independent:
+            dims = _DIMENSION_GROUPS.get(group, {group})
+            covered.append(
+                max(
+                    (
+                        score
+                        for cause_id, (score, _reason) in scores.items()
+                        if dims & set(HYPOTHESIS_CATALOGUE[cause_id].dimensions)
+                    ),
+                    default=0.0,
+                )
+            )
+        covered.sort(reverse=True)
+        s = (covered[0] + covered[1]) / 2 + 0.20 + 0.10 * min(2, len(independent) - 2)
         why.append(
-            "several unrelated segments degraded together: " + ", ".join(sorted(independent))
+            "several unrelated segments degraded together, and no single cause explains them "
+            "all: " + ", ".join(sorted(independent))
         )
     scores["multi_factor"] = (s, why)
 
@@ -352,22 +376,25 @@ def _explanatory_coverage(bundle: EvidenceBundle, cause_id: str) -> float | None
     return max(shares) if shares else None
 
 
+# Dimensions that describe one fault from several angles. Route, gateway and PSP are the same
+# routing decision seen three ways, so a single PSP outage lights all three up.
+_DIMENSION_GROUPS: dict[str, set[str]] = {
+    "routing": {"psp", "route_id", "gateway"},
+    "issuer": {"issuer"},
+    "client": {"app_version", "os"},
+    "geography": {"geography"},
+    "value": {"amount_band"},
+}
+
+
 def _independent_dimensions(f: CauseFeatures) -> set[str]:
     """Strong dimensions that are not aliases of one another.
 
-    Route, gateway and PSP describe the same routing decision from three angles, so a single PSP
-    outage lights all three up. Collapsing them prevents one fault being mistaken for three and
-    wrongly diagnosed as multi-factor.
+    Collapsing aliases prevents one fault being mistaken for three and wrongly diagnosed as
+    multi-factor.
     """
-    groups = {
-        "routing": {"psp", "route_id", "gateway"},
-        "issuer": {"issuer"},
-        "client": {"app_version", "os"},
-        "geography": {"geography"},
-        "value": {"amount_band"},
-    }
     hit = set()
-    for group, dims in groups.items():
+    for group, dims in _DIMENSION_GROUPS.items():
         if any(d in f.strong_dimensions for d in dims):
             hit.add(group)
     return hit

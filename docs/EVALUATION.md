@@ -211,6 +211,22 @@ helps or that it does not: at this corpus size the effect is not measurable eith
 published number depends on it. Measuring it properly needs a larger corpus and a harness that
 carries memory across runs deliberately.
 
+**`SCN-MULTI` is now diagnosed correctly, by looking again after acting.** Its second fault - an
+issuer on cards, alongside a UPI provider outage - needs roughly six minutes of traffic to become
+significant, while the first decision has to be made after two. Waiting for it before deciding was
+tried and was clearly wrong: it delayed every incident past its approval and broke the revert path.
+The diagnosis is instead revised *after* the action has been taken and verified, pooling evidence
+from onset, so the mitigation timeline is untouched and only the diagnosis handed to the human
+improves. If the wider look does not establish a second fault, the original diagnosis stands.
+
+Two supporting corrections were needed. `multi_factor` scored a flat prior, so the strongest
+partial explanation always outranked the account covering everything; it is now scored from the
+hypotheses it subsumes. And the echo test filed the second fault as an echo of the first: it
+re-measures a candidate's whole dimension, which for an issuer spans every payment method and
+dilutes a card-only fault into insignificance. A segment that names a shared dimension with a
+different value cannot contain the same payment as the primary, so it cannot be an echo of it -
+that is now decided directly rather than by a test that cannot see it.
+
 **Nine scenarios is a small corpus.** The accuracy figures have wide confidence intervals. Three
 seeds reduce variance from traffic sampling but not from scenario design.
 

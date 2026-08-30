@@ -279,3 +279,42 @@ def test_a_method_wide_failure_is_not_blamed_on_its_largest_provider():
     psp_findings = [f for f in incident.evidence.findings if f.dimension == "psp"]
     assert psp_findings, "expected PSP evidence to exist and be considered"
     assert all(f.metrics.get("independent") is False for f in psp_findings)
+
+
+def test_a_second_fault_is_reported_once_the_evidence_arrives():
+    """Two concurrent faults must be diagnosed as two, without delaying the fix for the first.
+
+    SCN-MULTI degrades a UPI provider and, separately, an issuer on cards. The issuer fault needs
+    roughly six minutes of traffic to clear the significance bar and the first decision has to be
+    made after two, so at decision time only the provider fault is established. Waiting for the
+    second before deciding is the wrong trade - an earlier attempt to do that pushed every
+    incident past its approval and broke the revert path.
+
+    The review therefore happens after acting and verifying: the mitigation timeline is untouched
+    and the diagnosis handed to the human is the better one.
+    """
+    engine, incident = _run("SCN-MULTI", seed=991)
+    assert incident.root_cause is not None
+    assert incident.root_cause.cause_id == "multi_factor"
+
+
+def test_a_disjoint_segment_is_never_an_echo_of_the_primary_fault():
+    """An echo must share traffic with the fault it echoes.
+
+    `device=mobile` looks degraded during a UPI outage because UPI is mobile-heavy - that is an
+    echo. But `card & ICICI` shares no payment with `upi & psp_yes`, so no amount of the UPI
+    fault's damage can reach it. The residual test could not see this: it re-measures the
+    candidate's whole dimension, which for an issuer means every payment method, diluted by that
+    issuer's healthy traffic until it fails. A 31-point drop on cards was filed as an echo of a
+    UPI provider outage, and the second fault vanished from the diagnosis.
+    """
+    from pic.agents.investigation import _provably_disjoint
+
+    upi_psp = {"payment_method": "upi", "psp": "psp_yes"}
+    # Same dimension, different value: these cannot contain the same payment.
+    assert _provably_disjoint({"payment_method": "card", "issuer": "ICICI"}, upi_psp)
+    # Sharing no dimension proves nothing - the slices may overlap heavily, so the residual test
+    # must still decide.
+    assert not _provably_disjoint({"device": "mobile"}, upi_psp)
+    # Agreeing on every shared dimension is not disjoint either.
+    assert not _provably_disjoint({"payment_method": "upi", "geography": "MH"}, upi_psp)
