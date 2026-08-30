@@ -1066,3 +1066,127 @@ body {
 .spark.up { color: var(--status-good); }
 .spark.down { color: var(--status-critical); }
 .spark.neutral { color: var(--series-1); }
+
+/* ==========================================================================
+ * Apple-inspired refinement
+ *
+ * Four things borrowed, and nothing else: restraint, hierarchy, materials and motion.
+ *
+ * The palette is untouched. The status colours and the chart series were validated against this
+ * dark surface, and re-tinting the ground would mean re-validating all of them for a change
+ * nobody would read as an improvement. What changes is how the surface is *built*: hairline
+ * borders instead of visible ones, translucent layered materials instead of flat fills, a
+ * confident type scale on the narrative surfaces, continuous radii, and pill controls.
+ * ======================================================================== */
+
+:root {
+  /* SF first where it exists, falling back to the previous stack everywhere else. */
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter",
+    "Segoe UI", Roboto, sans-serif;
+  --radius: 14px;
+  --radius-lg: 20px;
+  /* A hairline reads as an edge without drawing a line across the design. */
+  --hairline: rgba(255, 255, 255, 0.09);
+  --hairline-strong: rgba(255, 255, 255, 0.16);
+}
+
+body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+/* --- materials ---------------------------------------------------------- */
+
+.panel,
+.hero,
+.walk-body,
+.stepper,
+.tile {
+  border-color: var(--hairline);
+  border-radius: var(--radius);
+}
+
+.walk-body,
+.hero { border-radius: var(--radius-lg); }
+
+/* The top bar floats over the content it scrolls past, the way a titlebar does. */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--surface-0) 78%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom-color: var(--hairline);
+  margin-inline: -4px;
+  padding-inline: 4px;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .topbar { background: var(--surface-0); }
+}
+
+/* --- hierarchy ---------------------------------------------------------- */
+
+/* Large type is where the confidence comes from: one clear thing to read first, set tight, with
+ * the supporting copy stepping down rather than competing. */
+.walk-body > h2 {
+  font-size: clamp(24px, 2.6vw, 34px);
+  line-height: 1.16;
+  letter-spacing: -0.028em;
+  font-weight: 600;
+  max-width: 22ch;
+}
+
+.hero-copy h2 {
+  font-size: clamp(22px, 2.4vw, 31px);
+  line-height: 1.18;
+  letter-spacing: -0.026em;
+  font-weight: 600;
+}
+
+.walk-lede {
+  font-size: 15px;
+  line-height: 1.62;
+  letter-spacing: -0.006em;
+  max-width: 66ch;
+}
+
+.walk-body { padding: 34px 36px 36px; }
+.story { padding: 20px 22px; border-radius: var(--radius); }
+.story p { font-size: 13.5px; }
+
+.tile .value { letter-spacing: -0.03em; }
+
+/* --- controls ----------------------------------------------------------- */
+
+/* Pill controls, generous targets, and a press that acknowledges itself. */
+.btn,
+.tab,
+.switch-chip {
+  border-radius: 980px;
+  transition: background 0.18s ease, border-color 0.18s ease, transform 0.12s ease,
+    opacity 0.18s ease;
+}
+
+.btn:active:not(:disabled) { transform: scale(0.975); }
+.btn.lg { padding: 12px 24px; }
+.tabs { border-radius: 980px; border-color: var(--hairline); }
+
+.scenario { border-radius: var(--radius); }
+.scenario:hover:not(:disabled) { border-color: var(--hairline-strong); }
+
+/* --- motion ------------------------------------------------------------- */
+
+/* Motion explains a change rather than decorating it: panels settle in, they do not slide about.
+ * The reduced-motion block earlier in this file switches all of it off. */
+@keyframes settle {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.walk-body,
+.story,
+.outcome { animation: settle 0.34s cubic-bezier(0.32, 0.72, 0, 1) both; }
+
+.incident-row,
+.scenario,
+.strip-dot,
+.step-n { transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease; }

@@ -955,9 +955,19 @@ function readableAction(action) {
   return action ? action.replace(/_/g, ' ') : 'no action'
 }
 
-/** Granted parameters as prose. `{"max_shift_pct": 25}` reads as "max shift pct 25". */
+/** Granted parameters as prose. `{"max_shift_pct": 25}` reads as "max shift pct 25".
+ *
+ *  Long values are dropped rather than truncated. A ticket carries its whole title and
+ *  description in its parameters, and printing them turned the heading of the approval prompt
+ *  into a paragraph - the reader needs to know *what* is being approved, and the body text
+ *  already says why.
+ */
+const PARAM_VALUE_LIMIT = 40
+
 function paramText(params) {
   const entries = Object.entries(params || {})
+    .filter(([, v]) => v !== null && v !== undefined && String(v).length <= PARAM_VALUE_LIMIT)
+    .slice(0, 3)
   if (!entries.length) return ''
   return entries.map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`).join(', ')
 }
