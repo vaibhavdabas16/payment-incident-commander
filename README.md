@@ -279,8 +279,12 @@ docs/                 ARCHITECTURE · DECISIONS · EVALUATION · DEMO
   split is exact: every `shift_traffic` revert succeeded, and every failure is `rollback_change`,
   where the simulator cannot un-deploy an SDK so there is nothing to undo.
 - **Nine scenarios is a small corpus.** Accuracy figures carry wide confidence intervals.
-- **Revenue estimates are noisy early in an incident.** Order amounts are lognormal; a two-minute
-  estimate has real sampling error, flagged as provisional below 400 payments.
+- **Revenue estimates are noisy early in an incident, but no longer biased.** They used to be
+  systematically low - 21 of 24 runs under-estimated, by 42% at the median - because valuation
+  required each `(payment method x value band)` cell to hold 20 payments, and on a two-minute
+  window the discarded cells carried more of the loss than the surviving ones. Those cells are now
+  pooled rather than dropped. The median signed error is -1% and errors fall either side evenly;
+  what remains is sampling error on lognormal amounts, flagged as provisional below 400 payments.
 - **`rollback_change` is modelled, not simulated end to end.** The simulator has no notion of
   un-deploying an SDK, so it records intent and notifies the owning team, flagged `partial_effect`
   so verification does not expect a full recovery.

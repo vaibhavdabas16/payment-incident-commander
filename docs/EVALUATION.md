@@ -164,10 +164,29 @@ undo. No traffic-shift revert has ever failed.
 `approval_required_rate` is reported alongside, because needing a human before acting is a safety
 result in its own right and continuing past the gate must not hide it.
 
-**Revenue estimates are noisy on short windows.** Order amounts are lognormal with a long tail, so a
-two-minute estimate carries real sampling error. The Impact Agent measures from incident onset and
-flags an estimate as provisional below 400 payments, but the median absolute error is still tens of
-percent early in an incident and tightens as the incident develops.
+**Revenue estimates are noisy on short windows, and were biased until measured.** They were
+systematically low: 21 of 24 runs under-estimated, median signed error -41.8%. Valuation sums over
+a disjoint `(payment_method x amount_band)` partition and required each cell to hold 20 payments
+before contributing; on a two-minute window most cells hold fewer, and instrumenting the estimator
+showed the discarded cells carried more of the true loss than the ones that survived - three times
+as much on some runs.
+
+Lowering the floor would have been wrong, because a thin cell's deviation is extremely noisy and
+two scenarios already over-estimated. The sub-threshold cells are pooled into one residual group
+instead, which is sound because the partition is disjoint, and the pooled group faces the same
+significance bar so a healthy window still contributes nothing. Median signed error is now -1.0%
+with errors falling either side evenly, and the share within 25% of truth more than doubled.
+
+What is left is sampling error on lognormal amounts over a short window: the median *absolute*
+error is still around 39%, and it tightens as an incident develops. The Impact Agent flags an
+estimate as provisional below 400 payments.
+
+**Reproducibility.** `Agent.execute` charges each step's measured wall time to the simulated clock,
+which is right for the live dashboard and wrong for a benchmark - it makes the result depend on how
+busy the machine is. The harness pins a fixed simulated cost per step instead. Detection sampling
+was verified byte-identical across separate processes under different `PYTHONHASHSEED` values, so
+hash ordering does not affect results either. One historical run reported a false-positive count of
+6 where every run before and since reports 5; that has not been explained.
 
 **Nine scenarios is a small corpus.** The accuracy figures have wide confidence intervals. Three
 seeds reduce variance from traffic sampling but not from scenario design.
