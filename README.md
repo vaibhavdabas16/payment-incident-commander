@@ -15,6 +15,9 @@ OBSERVE → DETECT → INVESTIGATE → HYPOTHESIZE → DECIDE → [POLICY GATE] 
 
 ---
 
+**Live:** https://payment-incident-commander.onrender.com — the free tier sleeps after ~15 minutes
+idle, so the first request may take up to a minute to wake it.
+
 ## Quick start
 
 ```bash

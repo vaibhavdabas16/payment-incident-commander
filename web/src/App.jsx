@@ -166,9 +166,10 @@ export default function App() {
                     the policy gateway for permission, act — and then check their own work.
                   </p>
                   <p className="hint">
-                    Start with <em>UPI rails degraded network-wide</em>. The obvious fix cannot
-                    work there, so the agent measures no improvement, rolls its own change back and
-                    escalates rather than declaring victory.
+                    Start with <em>UPI rails degraded network-wide</em>, where the obvious fix
+                    cannot work. The agent measures the result against a concurrent control group
+                    and, instead of declaring victory, either reverts its own change or hands the
+                    incident to a human.
                   </p>
                 </div>
               ) : (
@@ -265,7 +266,8 @@ function Hero({ report, busy, onDemo }) {
             ▶ Run the failed-intervention demo
           </button>
           <span className="hero-hint">
-            injects a network-wide UPI failure that the obvious fix cannot repair
+            injects a network-wide UPI failure that rerouting cannot repair, then watch the agent
+            measure its own work
           </span>
         </div>
       </div>
@@ -429,7 +431,7 @@ function Tiles({ metrics }) {
  *  hardcoded list that would quietly drift away from the scenarios themselves. */
 function scenarioTag(s) {
   if (!s.injects_failure) return { text: 'restraint test', tone: 'good' }
-  if (s.fallback_healthy === false) return { text: 'fix fails → rollback', tone: 'high' }
+  if (s.fallback_healthy === false) return { text: 'the fix cannot work', tone: 'high' }
   if (s.recommended_action === 'escalate') return { text: 'hands to a human', tone: 'medium' }
   return null
 }
