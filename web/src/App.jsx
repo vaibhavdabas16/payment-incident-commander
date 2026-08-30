@@ -231,7 +231,12 @@ export default function App() {
 
         <main className="content">
           {page === 'command' ? (
-            <CommandCenter {...shared} onOpen={open} onApprove={approve} onReject={reject} onGoto={setPage} />
+            <CommandCenter
+              {...shared}
+              selectedId={selectedId}
+              onSelect={(id) => { pinned.current = true; setSelectedId(id) }}
+              onOpen={open} onApprove={approve} onReject={reject} onGoto={setPage}
+            />
           ) : null}
           {page === 'incidents' ? <Incidents {...shared} onOpen={open} onApprove={approve} onReject={reject} /> : null}
           {page === 'investigation' ? <Investigation incident={detail} agents={agents} busy={busy} onApprove={approve} onReject={reject} /> : null}

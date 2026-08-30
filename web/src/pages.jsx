@@ -15,17 +15,16 @@ const isOpen = (i) => i && i.state !== 'CLOSED'
 /* =========================================================== command centre */
 
 export function CommandCenter({
-  metrics, series, incidents, incident, agents, health, busy, error, onOpen, onApprove, onReject, onGoto,
+  metrics, series, incidents, incident, agents, health, busy, error,
+  selectedId, onSelect, onOpen, onApprove, onReject, onGoto,
 }) {
   const live = incidents?.find((i) => i.state !== 'CLOSED') || null
-  const recent = live || incidents?.[0] || null
-  const down = (metrics?.deviation ?? 0) < -0.005
+  const shown = incidents?.find((i) => i.incident_id === selectedId) || live || incidents?.[0] || null
+  const closed = shown && shown.state === 'CLOSED'
   const awaiting = incident?.state === 'AWAITING_HUMAN_APPROVAL'
   const rc = incident?.root_cause
+  const matches = incident && shown && incident.incident_id === shown.incident_id
 
-  /* One object on the page. Idle it answers "is anything wrong"; during an incident it becomes
-     the incident. Everything else has its own page in the sidebar — putting it here as well only
-     competed with whichever of the two mattered. */
   return (
     <>
       {error ? <ErrorBox>{error}</ErrorBox> : null}
@@ -33,35 +32,61 @@ export function CommandCenter({
       <section className={`focus ${live ? 'alert' : ''}`}>
         <header className="focus-head">
           <span className="focus-status">
-            <Led tone={live ? 'crit' : 'ok'} live />
-            {live ? (recent.severity === 'CRITICAL' ? 'Critical incident' : 'Incident open')
-                  : recent ? 'Resolved · monitoring' : 'All systems operational'}
+            <Led tone={live ? 'crit' : 'ok'} live={!!live} />
+            {live
+              ? (shown?.severity === 'CRITICAL' ? 'Critical incident' : 'Incident open')
+              : shown ? outcomeWords(shown, incident) : 'All systems operational'}
           </span>
-          {recent ? <span className="pill mono">{recent.incident_id}</span> : null}
           <span className="focus-spacer" />
-          <span className="focus-time mono">{metrics ? formatPct(metrics.success_rate) : '—'} success</span>
+          {/* With more than one incident the card has to say so and let you move between them.
+              Showing only the newest hid three of four. */}
+          {incidents?.length > 1 ? (
+            <span className="focus-switch">
+              {incidents.slice(0, 6).map((i) => (
+                <button
+                  key={i.incident_id}
+                  className={`switch ${i.incident_id === shown?.incident_id ? 'on' : ''}`}
+                  onClick={() => onSelect(i.incident_id)}
+                  title={i.title}
+                >
+                  <Led tone={i.state !== 'CLOSED' ? 'crit' : i.outcome?.includes('RECOVERED') ? 'ok' : 'warn'} />
+                  {i.incident_id.replace('INC-', '#')}
+                </button>
+              ))}
+            </span>
+          ) : null}
+          <span className="focus-time mono">{metrics ? formatPct(metrics.success_rate) : '\u2014'} success</span>
         </header>
 
         <div className="focus-body">
-          {recent ? (
+          {shown ? (
             <div className="focus-inc">
-              <h2>{recent.title}</h2>
-              <p>{rc ? `${rc.most_likely_root_cause}. ${confidenceInWords(rc.confidence)}.` : 'Agents are investigating…'}</p>
+              <h2>{shown.title}</h2>
+              <p>
+                {rc && matches
+                  ? `${rc.most_likely_root_cause}. ${confidenceInWords(rc.confidence)}.`
+                  : 'Agents are investigating\u2026'}
+              </p>
+
+              {matches ? <Result incident={incident} /> : null}
 
               <div className="focus-facts">
-                {impactFacts(incident).map(([k, v]) => (
+                {impactFacts(matches ? incident : null).map(([k, v]) => (
                   <div key={k}><span>{k}</span><b>{v}</b></div>
                 ))}
               </div>
 
               <div className="focus-actions">
-                {awaiting ? (
+                {awaiting && matches ? (
                   <>
                     <button className="btn primary" disabled={busy} onClick={onApprove}>Approve and execute</button>
                     <button className="btn danger" disabled={busy} onClick={onReject}>Reject</button>
                   </>
                 ) : null}
                 <button className="btn" onClick={() => onGoto('investigation')}>View investigation</button>
+                {incidents?.length > 1 ? (
+                  <button className="btn" onClick={() => onOpen(shown.incident_id)}>All incidents</button>
+                ) : null}
               </div>
             </div>
           ) : (
@@ -70,8 +95,9 @@ export function CommandCenter({
             </div>
           )}
 
-          {incident ? (
+          {shown && matches ? (
             <aside className="focus-trace">
+              <div className="trace-cap">{closed ? 'What the agents did' : 'Working now'}</div>
               <AgentTrace incident={incident} agents={agents} />
             </aside>
           ) : null}
@@ -83,6 +109,63 @@ export function CommandCenter({
         </footer>
       </section>
     </>
+  )
+}
+
+/** How the incident ended, in one line. Everything else on this card describes the problem; the
+ *  card never said whether it was solved, which is the only thing a finished incident is about. */
+function outcomeWords(summary, incident) {
+  const same = incident?.incident_id === summary.incident_id
+  const v = same ? incident.verification : null
+  if (same && rolledBack(incident)) return 'Fix reverted \u00b7 handed over'
+  if (v?.status === 'RECOVERED') return 'Recovered \u00b7 verified'
+  if (v?.status === 'PARTIALLY_RECOVERED') return 'Partly recovered'
+  if (summary.outcome === 'HANDED_TO_HUMAN' || summary.outcome === 'ESCALATED') return 'Handed to a human'
+  return 'Resolved \u00b7 monitoring'
+}
+
+function rolledBack(incident) {
+  return (incident?.audit || []).some((a) => String(a.approved_by || '').startsWith('policy_engine:rollback'))
+}
+
+function Result({ incident }) {
+  const v = incident.verification
+  const executed = (incident.audit || []).filter((a) => !String(a.approved_by || '').startsWith('policy_engine:'))
+  const action = executed[0]
+  if (!v && !action && !incident.escalation) return null
+
+  const reverted = rolledBack(incident)
+  const tone = reverted
+    ? 'warn'
+    : v?.status === 'RECOVERED' ? 'ok'
+    : v?.status === 'PARTIALLY_RECOVERED' ? 'warn'
+    : v ? 'crit' : 'mute'
+  const headline = reverted
+    ? 'The fix did not work, so the agent undid it'
+    : v?.status === 'RECOVERED' ? 'Recovered, verified against a control group'
+    : v?.status === 'PARTIALLY_RECOVERED' ? 'Partly recovered \u2014 the incident stays open'
+    : v ? 'The action did not help'
+    : 'Handed to a human without acting'
+
+  return (
+    <div className={`result ${tone}`}>
+      <div className="result-top">
+        <Tag tone={tone}>result</Tag>
+        <b>{headline}</b>
+      </div>
+      {action ? (
+        <div className="result-line">
+          <span>Action</span>{readableAction(action.action)} · approved by {action.approved_by}
+        </div>
+      ) : null}
+      {v ? <div className="result-line"><span>Measured</span>{v.explanation}</div> : null}
+      {incident.escalation ? (
+        <div className="result-line"><span>Handover</span>{incident.escalation.reason}</div>
+      ) : null}
+      {incident.time_to_mitigate_s != null ? (
+        <div className="result-line"><span>Acted</span>{Math.round(incident.time_to_mitigate_s)}s after detection</div>
+      ) : null}
+    </div>
   )
 }
 
