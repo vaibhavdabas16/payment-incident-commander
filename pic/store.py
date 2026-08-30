@@ -55,12 +55,26 @@ SEGMENT_DIMENSIONS = (
 )
 
 
+# The deepest history any consumer asks for is the detector's baseline lookback: 20 windows of
+# 120s with a 6x search multiplier is four hours. Six hours keeps a margin without letting a
+# long-running process accumulate for ever. At the live 60x speed-up the simulator produces about
+# 90,000 events an hour, so an unbounded store grows by tens of megabytes an hour and a small
+# container eventually dies - which is a strange way for a monitoring system to fail.
+DEFAULT_RETENTION_SECONDS = 4.5 * 3600
+
+# `_dirty` is a hook for batch persistence and nothing drains it today, so it would otherwise pin
+# every event ever generated and defeat the pruning above.
+MAX_DIRTY = 5_000
+
+
 class EventStore:
-    def __init__(self) -> None:
+    def __init__(self, retention_seconds: float | None = DEFAULT_RETENTION_SECONDS) -> None:
         self._events: list[PaymentEvent] = []
         self._epochs: list[float] = []
         self._config_changes: list[ConfigChange] = []
         self._dirty: list[PaymentEvent] = []
+        self._retention_seconds = retention_seconds
+        self._adds_since_prune = 0
 
     # ---------------------------------------------------------------- writes
 
@@ -74,6 +88,14 @@ class EventStore:
             self._epochs.append(ts)
             self._events.append(event)
         self._dirty.append(event)
+        if len(self._dirty) > MAX_DIRTY:
+            del self._dirty[: len(self._dirty) - MAX_DIRTY]
+
+        # Pruning in batches rather than on every insert: the check is cheap but the deletion is
+        # not, and history older than the retention window is of no use to anyone.
+        self._adds_since_prune += 1
+        if self._retention_seconds and self._adds_since_prune >= 1_000:
+            self._prune(ts)
 
     def extend(self, events: Iterable[PaymentEvent]) -> None:
         for e in events:
@@ -81,6 +103,16 @@ class EventStore:
 
     def add_config_change(self, change: ConfigChange) -> None:
         self._config_changes.append(change)
+
+    def _prune(self, newest_epoch: float) -> None:
+        """Drop events older than the retention window."""
+        self._adds_since_prune = 0
+        assert self._retention_seconds is not None
+        cutoff = newest_epoch - self._retention_seconds
+        index = bisect.bisect_left(self._epochs, cutoff)
+        if index > 0:
+            del self._epochs[:index]
+            del self._events[:index]
 
     def take_dirty(self) -> list[PaymentEvent]:
         out, self._dirty = self._dirty, []

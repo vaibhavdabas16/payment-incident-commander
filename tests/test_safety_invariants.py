@@ -353,3 +353,49 @@ def test_a_scenario_that_breaks_nothing_is_never_scored_as_a_missed_detection():
     # A scenario that does break something must still count, or the fix would hide real misses.
     real = get_scenario("SCN-UPI-PSP")
     assert harness._scenario_active(engine, real, onset) is True
+
+
+def test_a_hung_agent_is_abandoned_and_escalated_rather_than_stalling():
+    """A step that never returns must become a human handover, not an open incident forever.
+
+    `Agent.timeout_s` documented that a step is "abandoned and treated as a failure" after the
+    timeout, but nothing enforced it: a reasoner that never answered held the incident in its
+    current state indefinitely, with the merchant still losing money and nobody told. This was
+    observed against a live LLM, where the pipeline sat in DIAGNOSING for over ten minutes.
+    """
+    import time
+
+    from pic.engine import Engine, EngineConfig
+    from pic.agents.root_cause import RootCauseAgent
+    from pic.schemas import IncidentState
+
+    original = RootCauseAgent.run
+
+    def hangs(self, ctx):
+        time.sleep(30)  # far beyond the timeout the test sets
+        return original(self, ctx)
+
+    engine = Engine(EngineConfig(seed=7, reasoner="deterministic"))
+    engine.warmup(45)
+    engine.trigger("SCN-UPI-PSP")
+
+    RootCauseAgent.run = hangs
+    engine.supervisor.root_cause_agent.timeout_s = 1.0
+    started = time.perf_counter()
+    try:
+        incident = engine.run_until_incident(max_ticks=40)
+        assert incident is not None
+        engine.supervisor.run_incident(incident)
+    finally:
+        RootCauseAgent.run = original
+
+    elapsed = time.perf_counter() - started
+    # The hung step is abandoned near its timeout rather than run to completion.
+    assert elapsed < 25, f"the supervisor waited {elapsed:.1f}s for a step it should have abandoned"
+
+    diagnosis = next((s for s in incident.steps if s.agent == "root_cause"), None)
+    assert diagnosis is not None and not diagnosis.ok
+    assert "timed out" in (diagnosis.summary or "")
+    # And the incident ends in human hands rather than sitting open.
+    assert incident.state is IncidentState.CLOSED
+    assert incident.escalation is not None

@@ -15,6 +15,8 @@ from __future__ import annotations
 import time
 import uuid
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable
@@ -55,12 +57,34 @@ class Agent(ABC):
 
     name: str = "agent"
     state: IncidentState = IncidentState.OBSERVING
-    # Seconds after which the step is abandoned and treated as a failure.
+    # Seconds after which the step is abandoned and treated as a failure. Enforced in `execute`;
+    # set to 0 or None to wait indefinitely.
     timeout_s: float = 30.0
 
     @abstractmethod
     def run(self, ctx: IncidentContext) -> AgentResult:
         """Do the work. Raise on unrecoverable failure; `execute` contains it."""
+
+    def _run_within_timeout(self, ctx: IncidentContext) -> AgentResult:
+        """Run the agent, abandoning it if it exceeds `timeout_s`.
+
+        The work happens on a worker thread so a blocked call - an LLM that never answers, a tool
+        that never returns - cannot hold the incident open indefinitely. Python cannot kill a
+        running thread, so an abandoned step may still complete in the background; the pool is
+        shut down without waiting and its result is discarded. That is the accepted cost of the
+        guarantee, and it is bounded: the supervisor escalates on the failure rather than starting
+        more work on the same incident.
+        """
+        if not self.timeout_s or self.timeout_s <= 0:
+            return self.run(ctx)
+
+        pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"agent-{self.name}")
+        try:
+            future = pool.submit(self.run, ctx)
+            return future.result(timeout=self.timeout_s)
+        finally:
+            # Never wait: waiting here would reinstate exactly the stall the timeout prevents.
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def execute(self, ctx: IncidentContext) -> AgentStep:
         started_wall = utcnow()
@@ -68,7 +92,16 @@ class Agent(ABC):
         ctx.publish("agent_started", {"agent": self.name, "state": self.state.value})
 
         try:
-            result = self.run(ctx)
+            result = self._run_within_timeout(ctx)
+        except FutureTimeout:
+            # A hung step is worse than a failed one: the incident stays open, the merchant keeps
+            # losing money, and nobody is told. Every caller of `execute` treats `ok=False` as
+            # grounds to escalate, so a timeout becomes a human handover instead of a stall.
+            result = AgentResult(
+                ok=False,
+                summary=f"{self.name} timed out after {self.timeout_s:.0f}s",
+                error=f"AgentTimeout: {self.name} exceeded {self.timeout_s:.0f}s",
+            )
         except Exception as exc:
             result = AgentResult(
                 ok=False,
