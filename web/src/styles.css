@@ -643,3 +643,78 @@ details.more[open] > summary { margin-bottom: 10px; }
   .lp-bar { grid-template-columns: 1fr; gap: 5px; }
   .lp-bar-v { text-align: left; }
 }
+
+/* ------------------------------------------------------- calm + density */
+
+/* The all-clear used to occupy a full panel of vertical space to say nothing is wrong. One line
+ * says it better. */
+.calm {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.calm-mark {
+  width: 28px; height: 28px; border-radius: 9px; flex: none;
+  display: grid; place-items: center;
+  background: var(--ok-bg); border: 1px solid rgba(46, 160, 67, 0.3); color: var(--ok); font-size: 14px;
+}
+
+.calm-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.calm-text b { font-size: 13.5px; }
+.calm-text span { font-size: 12.5px; color: var(--text-2); }
+.calm-live { margin-left: auto; display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11.5px; color: var(--text-3); }
+
+/* Health as chips rather than two panels of bars: same information, a tenth of the space. */
+.chips-groups { display: flex; flex-direction: column; gap: 12px; }
+.chips-row { display: grid; grid-template-columns: 84px 1fr; gap: 12px; align-items: start; }
+.chips-label { font-size: 11.5px; color: var(--text-3); padding-top: 5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.chips-empty { font-size: 12px; color: var(--text-3); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 10px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--surface-2);
+  font-size: 12px; text-transform: capitalize;
+}
+.chip b { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 500; color: var(--text-2); }
+.chip.degraded { border-color: rgba(232, 131, 58, 0.4); background: var(--elevated-bg); }
+.chip.critical { border-color: rgba(229, 72, 77, 0.45); background: var(--crit-bg); }
+.chip.watch { border-color: rgba(210, 153, 34, 0.35); background: var(--warn-bg); }
+
+/* ------------------------------------------------------------ simulate menu */
+
+.menu { position: relative; }
+.menu > summary { list-style: none; cursor: pointer; }
+.menu > summary::-webkit-details-marker { display: none; }
+
+.menu-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 320px;
+  z-index: 40;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  padding: 12px;
+}
+
+.menu-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-size: 13px; }
+.menu-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+
+.menu-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  width: 100%; text-align: left;
+  padding: 8px 10px; border-radius: var(--r-sm);
+  border: none; background: transparent; color: var(--text-2);
+  font-size: 12.5px; cursor: pointer;
+}
+.menu-item:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.menu-item.on { color: var(--warn); }
+.menu-item:disabled { opacity: 0.5; cursor: not-allowed; }

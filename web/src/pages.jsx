@@ -4,6 +4,7 @@ import { formatINR, formatPct, formatClock, severityClass } from './api.js'
 import {
   AgentTrace, Card, Empty, ErrorBox, Evidence, EventFeed, HealthBars, Hypotheses, Led, Metric,
   Skeleton, Tag, Timeline, confidenceInWords, impactFacts, paramText, readableAction, severityTone,
+  statusTone,
 } from './components.jsx'
 
 /* Pages. Every figure comes from the API; where the system has not produced something yet the
@@ -14,113 +15,108 @@ const isOpen = (i) => i && i.state !== 'CLOSED'
 /* =========================================================== command centre */
 
 export function CommandCenter({
-  metrics, series, incidents, incident, agents, health, events, scenarios, busy, notice, error,
-  onInject, onReset, onOpen, onApprove, onReject, onGoto,
+  metrics, series, incidents, incident, agents, health, busy, error, onOpen, onApprove, onReject, onGoto,
 }) {
   const live = incidents?.find((i) => i.state !== 'CLOSED') || null
-  // Three states, not two: nothing has happened, something is happening, or something happened
-  // and is done. Showing the calm empty state while a finished investigation sits underneath it
-  // reads as a contradiction.
   const recent = live || incidents?.[0] || null
-  const failed = metrics ? Math.round(metrics.transactions * (1 - metrics.success_rate)) : null
   const down = (metrics?.deviation ?? 0) < -0.005
 
   return (
     <>
       <div className="page-head">
         <div>
-          <h1>Payment Command Center</h1>
-          <p>Real-time monitoring and multi-agent incident response across payment infrastructure.</p>
+          <h1>Command Center</h1>
+          <p>Real-time monitoring and multi-agent incident response.</p>
         </div>
         <span className="pill">
           <Led tone={live ? 'crit' : 'ok'} live />
-          {live ? 'Active incident detected' : 'All systems operational'}
+          {live ? 'Active incident' : 'All systems operational'}
         </span>
       </div>
 
       {error ? <ErrorBox>{error}</ErrorBox> : null}
 
+      {/* Four numbers, not five. Latency and volume belong on Payment Health, where they can be
+          read against their own history rather than competing here. */}
       <div className="metrics">
         <Metric
-          label="Transaction success rate"
+          label="Success rate"
           value={metrics ? formatPct(metrics.success_rate) : '—'}
-          delta={metrics ? `${formatPct(Math.abs(metrics.deviation), 1)} vs baseline ${formatPct(metrics.baseline_success_rate)}` : null}
+          delta={metrics ? `${formatPct(Math.abs(metrics.deviation), 1)} vs ${formatPct(metrics.baseline_success_rate)} baseline` : null}
           deltaTone={down ? 'down' : 'up'}
           spark={series}
           sparkTone={down ? 'crit' : 'ok'}
         />
-        <Metric label="Payment volume" value={metrics ? formatINR(metrics.gmv_paise) : '—'} delta="in the current window" />
-        <Metric label="Failed transactions" value={failed != null ? failed.toLocaleString() : '—'} delta={metrics ? `of ${metrics.transactions.toLocaleString()} attempts` : null} />
-        <Metric label="Active incidents" value={metrics?.active_incidents ?? '—'} delta={metrics ? `${metrics.resolved_incidents} resolved · ${metrics.escalated_incidents} escalated` : null} />
-        <Metric label="p95 latency" value={metrics ? `${metrics.p95_latency_ms} ms` : '—'} delta="checkout to authorisation" />
+        <Metric label="Revenue at risk" value={metrics ? formatINR(metrics.revenue_at_risk_per_hour_paise) : '—'} delta="per hour, open incidents" />
+        <Metric label="Revenue protected" value={metrics ? formatINR(metrics.revenue_protected_per_hour_paise) : '—'} delta="per hour, verified" />
+        <Metric label="Incidents" value={metrics?.active_incidents ?? '—'} delta={metrics ? `${metrics.resolved_incidents} resolved · ${metrics.escalated_incidents} escalated` : null} />
       </div>
 
+      {/* One focus. Either the incident, or a single calm line saying there is not one. */}
       {recent ? (
-        <IncidentBanner incident={incident} summary={recent} resolved={!live} busy={busy} onOpen={onOpen} onApprove={onApprove} onReject={onReject} onGoto={onGoto} />
+        <IncidentBanner
+          incident={incident} summary={recent} resolved={!live} busy={busy}
+          onOpen={onOpen} onApprove={onApprove} onReject={onReject} onGoto={onGoto}
+        />
       ) : (
-        <Card>
-          <Empty
-            title="No active incidents"
-            body="Payment infrastructure is operating normally. Agents are continuously monitoring transaction patterns, provider health and issuer behaviour."
-            facts={[
-              { label: 'AI agents monitoring', tone: 'agent', live: true },
-              { label: `Last scan ${metrics ? formatClock(metrics.timestamp) : '—'}`, tone: 'ok' },
-              { label: `${(health?.payment_method?.length || 0) + (health?.psp?.length || 0)} components watched`, tone: 'ok' },
-            ]}
-          />
-        </Card>
+        <div className="calm">
+          <span className="calm-mark">✓</span>
+          <div className="calm-text">
+            <b>No active incidents</b>
+            <span>Agents are monitoring transaction patterns, provider health and issuer behaviour.</span>
+          </div>
+          <span className="calm-live"><Led tone="agent" live />monitoring</span>
+        </div>
       )}
 
+      {/* Component health as a dense strip rather than two panels of bars. The detail lives on
+          Payment Health; here it only has to answer "where is the problem". */}
+      <Card title="Component health" sub={`${health?.window_minutes ?? 5} min window`} right={<button className="btn sm" onClick={() => onGoto('health')}>Details</button>}>
+        <HealthChips groups={[['Methods', health?.payment_method], ['Providers', health?.psp]]} />
+      </Card>
+
       <div className="grid-73">
-        <Card title="Payment success rate" sub={metrics ? `${metrics.transactions} payments in window` : ''}>
+        <Card title="Payment success rate" sub={metrics ? `${metrics.transactions} payments` : ''}>
           <SuccessRateChart points={series} baseline={metrics?.baseline_success_rate} />
         </Card>
-
-        <Card
-          title="AI Incident Commander"
-          right={<span className="sub">{incident ? 'investigation in progress' : 'idle'}</span>}
-          flush
-        >
+        <Card title="AI Incident Commander" right={<span className="sub">{live ? 'investigating' : 'idle'}</span>} flush>
           {incident ? (
             <AgentTrace incident={incident} agents={agents} />
           ) : (
             <div className="card-body">
               <p style={{ fontSize: 13, color: 'var(--text-2)' }}>
-                Eight agents stand ready. Each has one responsibility and hands on a typed result;
-                the trace appears here the moment an incident opens.
+                Eight agents, one responsibility each. The trace appears here the moment an
+                incident opens.
               </p>
             </div>
           )}
         </Card>
       </div>
-
-      <div className="grid-2">
-        <Card title="Payment method health" sub={`${health?.window_minutes ?? 5} min window`} flush>
-          <HealthBars rows={health?.payment_method} />
-        </Card>
-        <Card title="Provider health" sub="live success rate vs own baseline" flush>
-          <HealthBars rows={health?.psp} />
-        </Card>
-      </div>
-
-      <div className="grid-73">
-        <Card title="Inject an incident" right={<button className="btn sm" disabled={busy || !scenarios?.some((s) => s.active)} onClick={onReset}>Reset</button>}>
-          {notice ? <div className={`notice ${notice.kind}`}>{notice.text}</div> : null}
-          <div className="scen">
-            {(scenarios || []).map((s) => (
-              <button key={s.scenario_id} className={`scen-btn ${s.active ? 'on' : ''}`} disabled={busy} title={s.description} onClick={() => onInject(s)}>
-                <span className="scen-name">{s.name}</span>
-                <span className="scen-desc">{s.description.slice(0, 96)}…</span>
-                {s.active ? <Tag tone="warn">running</Tag> : null}
-              </button>
-            ))}
-          </div>
-        </Card>
-        <Card title="Agent activity" sub="live" flush>
-          <EventFeed events={events} />
-        </Card>
-      </div>
     </>
+  )
+}
+
+/** Health as chips: one line per group, a dot and a number each. Two panels of full-width bars
+ *  said the same thing in ten times the space. */
+function HealthChips({ groups }) {
+  return (
+    <div className="chips-groups">
+      {groups.map(([label, rows]) => (
+        <div className="chips-row" key={label}>
+          <span className="chips-label">{label}</span>
+          <div className="chips">
+            {(rows || []).map((r) => (
+              <span className={`chip ${r.status}`} key={r.segment} title={`${r.transactions} transactions`}>
+                <Led tone={statusTone(r.status)} />
+                {r.segment}
+                <b>{formatPct(r.success_rate)}</b>
+              </span>
+            ))}
+            {!rows?.length ? <span className="chips-empty">collecting…</span> : null}
+          </div>
+        </div>
+      ))}
+    </div>
   )
 }
 

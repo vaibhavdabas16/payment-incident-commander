@@ -197,12 +197,33 @@ export default function App() {
               <Led tone={status !== 'connected' ? '' : live ? 'crit' : 'agent'} live={status === 'connected'} />
               {status === 'connected' ? (metrics?.agent_status || 'AI agents monitoring') : 'Reconnecting…'}
             </span>
+
+            {/* Injecting a scenario is a demo control, not part of the operator's job, so it
+                lives in the chrome rather than taking a panel in the page. */}
+            <details className="menu">
+              <summary className="btn sm">Simulate</summary>
+              <div className="menu-pop">
+                <div className="menu-head">
+                  <b>Inject an incident</b>
+                  <button className="btn sm" disabled={busy || !scenarios.some((s) => s.active)} onClick={reset}>Reset</button>
+                </div>
+                {notice ? <div className={`notice ${notice.kind}`}>{notice.text}</div> : null}
+                <div className="menu-list">
+                  {scenarios.map((s) => (
+                    <button key={s.scenario_id} className={`menu-item ${s.active ? 'on' : ''}`} disabled={busy} title={s.description} onClick={() => inject(s)}>
+                      <span>{s.name}</span>
+                      {s.active ? <Led tone="warn" live /> : null}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </details>
           </div>
         </header>
 
         <main className="content">
           {page === 'command' ? (
-            <CommandCenter {...shared} onInject={inject} onReset={reset} onOpen={open} onApprove={approve} onReject={reject} onGoto={setPage} />
+            <CommandCenter {...shared} onOpen={open} onApprove={approve} onReject={reject} onGoto={setPage} />
           ) : null}
           {page === 'incidents' ? <Incidents {...shared} onOpen={open} onApprove={approve} onReject={reject} /> : null}
           {page === 'investigation' ? <Investigation incident={detail} agents={agents} busy={busy} onApprove={approve} onReject={reject} /> : null}
