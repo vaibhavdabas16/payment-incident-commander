@@ -97,6 +97,7 @@ class IncidentSupervisor:
         memory: Any = None,
         control: Any = None,
         emit: Callable[[str, dict[str, Any]], None] | None = None,
+        step_cost_s: float | None = None,
     ) -> None:
         self.store = store
         self.detector = detector
@@ -107,6 +108,12 @@ class IncidentSupervisor:
         self.memory = memory
         self.control = control
         self.emit = emit
+        # Simulated seconds charged for each agent step. `None` charges the step's measured wall
+        # time, which is what the live dashboard wants - an agent really does hold the incident
+        # open while it thinks. A benchmark wants the opposite: charging real time makes the
+        # simulated clock depend on how busy the machine is, so the same seed advances different
+        # distances on a loaded box and borderline runs change outcome between runs.
+        self.step_cost_s = step_cost_s
 
         self.detection_agent = DetectionAgent()
         self.investigation_agent = InvestigationAgent()
@@ -137,7 +144,11 @@ class IncidentSupervisor:
             memory=self.memory,
             control=self.control,
             emit=self.emit,
-            charge_time=self.clock.advance,
+            charge_time=(
+                self.clock.advance
+                if self.step_cost_s is None
+                else lambda _measured: self.clock.advance(self.step_cost_s)
+            ),
         )
         # The registry shares the context's clock and incident id so tool results are windowed
         # consistently and every call is attributed to the right incident.

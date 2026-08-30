@@ -40,6 +40,12 @@ from ..simulation.scenarios import SCENARIOS, Scenario, get_scenario
 
 DEFAULT_SEEDS = (7, 20260824, 991)
 WARMUP_MINUTES = 45
+# Simulated seconds charged per agent step during evaluation. Live, an agent charges the wall time
+# it really took; that is right for a dashboard and wrong for a benchmark, because the simulated
+# clock then advances further on a busy machine and borderline runs change outcome between runs of
+# identical code. A fixed cost keeps a step's effect on the clock the same everywhere while still
+# charging something, so time-to-mitigate does not pretend that thinking is free.
+EVAL_STEP_COST_S = 1.5
 TICK_SECONDS = 30.0
 MAX_TICKS = 40
 # Length of the clean run used to measure the false-positive rate.
@@ -173,7 +179,9 @@ class Harness:
 
     def measure_false_positives(self, seed: int) -> None:
         """Run the detector over healthy traffic and count every alarm as a false positive."""
-        engine = Engine(EngineConfig(seed=seed, reasoner=self.reasoner))
+        engine = Engine(
+            EngineConfig(seed=seed, reasoner=self.reasoner, step_cost_s=EVAL_STEP_COST_S)
+        )
         engine.warmup(WARMUP_MINUTES)
         ticks = int(CLEAN_MINUTES * 60 / TICK_SECONDS)
         for _ in range(ticks):
@@ -208,7 +216,9 @@ class Harness:
         first detection would leave the rest unsampled and report a recall of a few percent for a
         detector that in fact fires on almost every one of them.
         """
-        engine = Engine(EngineConfig(seed=seed, reasoner=self.reasoner))
+        engine = Engine(
+            EngineConfig(seed=seed, reasoner=self.reasoner, step_cost_s=EVAL_STEP_COST_S)
+        )
         engine.warmup(WARMUP_MINUTES)
         engine.trigger(scenario)
         onset = engine.now
@@ -225,7 +235,9 @@ class Harness:
             )
 
     def _execute(self, scenario: Scenario, seed: int, run: ScenarioRun) -> None:
-        engine = Engine(EngineConfig(seed=seed, reasoner=self.reasoner))
+        engine = Engine(
+            EngineConfig(seed=seed, reasoner=self.reasoner, step_cost_s=EVAL_STEP_COST_S)
+        )
         engine.warmup(WARMUP_MINUTES)
         engine.trigger(scenario)
         onset = engine.now

@@ -38,6 +38,9 @@ class EngineConfig:
     warmup_minutes: int = 45
     reasoner: str | None = None
     persist_memory: bool = False
+    # Fixed simulated seconds per agent step. `None` charges measured wall time (live use); the
+    # evaluation harness pins it so a run does not depend on how fast the machine is.
+    step_cost_s: float | None = None
     start_time: datetime = field(
         default_factory=lambda: datetime(2026, 8, 24, 10, 0, 0, tzinfo=timezone.utc)
     )
@@ -81,6 +84,7 @@ class Engine:
             memory=self.memory,
             control=self.simulator.control,
             emit=self._emit,
+            step_cost_s=self.config.step_cost_s,
         )
 
     # ---------------------------------------------------------------- events
