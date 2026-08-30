@@ -133,8 +133,17 @@ export default function App() {
             </div>
             <div className="panel-body">
               {incidents.length === 0 ? (
-                <div className="empty">
-                  No incidents. Trigger a scenario to watch the agents work.
+                <div className="empty onboarding">
+                  <strong>Nothing is broken right now.</strong>
+                  <p>
+                    Inject a scenario below. The agents will observe, investigate, diagnose, ask
+                    the policy gateway for permission, act — and then check their own work.
+                  </p>
+                  <p className="hint">
+                    Start with <em>UPI rails degraded network-wide</em>. The obvious fix cannot
+                    work there, so the agent measures no improvement, rolls its own change back and
+                    escalates rather than declaring victory.
+                  </p>
                 </div>
               ) : (
                 <div className="incident-list">
@@ -239,6 +248,15 @@ function Tiles({ metrics }) {
   )
 }
 
+/** What a scenario exists to prove, derived from the scenario's own flags rather than a
+ *  hardcoded list that would quietly drift away from the scenarios themselves. */
+function scenarioTag(s) {
+  if (!s.injects_failure) return { text: 'restraint test', tone: 'good' }
+  if (s.fallback_healthy === false) return { text: 'fix fails → rollback', tone: 'high' }
+  if (s.recommended_action === 'escalate') return { text: 'hands to a human', tone: 'medium' }
+  return null
+}
+
 function ScenarioPanel({ scenarios, busy, onTrigger }) {
   return (
     <section className="panel">
@@ -248,12 +266,24 @@ function ScenarioPanel({ scenarios, busy, onTrigger }) {
       </div>
       <div className="panel-body">
         <div className="scenario-grid">
-          {scenarios.map((s) => (
-            <button key={s.scenario_id} className="btn scenario" disabled={busy} onClick={() => onTrigger(s.scenario_id)}>
-              <span className="s-name">{s.name}</span>
-              <span className="s-desc">{s.description.slice(0, 118)}…</span>
-            </button>
-          ))}
+          {scenarios.map((s) => {
+            const tag = scenarioTag(s)
+            return (
+              <button
+                key={s.scenario_id}
+                className="btn scenario"
+                disabled={busy}
+                title={s.description}
+                onClick={() => onTrigger(s.scenario_id)}
+              >
+                <span className="s-head">
+                  <span className="s-name">{s.name}</span>
+                  {tag ? <span className={`badge ${tag.tone}`}>{tag.text}</span> : null}
+                </span>
+                <span className="s-desc">{s.description.slice(0, 118)}…</span>
+              </button>
+            )
+          })}
         </div>
       </div>
     </section>
@@ -263,7 +293,7 @@ function ScenarioPanel({ scenarios, busy, onTrigger }) {
 function EventFeed({ events }) {
   if (!events.length) return <div className="empty">Waiting for agent activity…</div>
   return (
-    <ul className="feed">
+    <ul className="feed" aria-live="polite" aria-relevant="additions">
       {events.map((e, index) => (
         <li key={index}>
           <span className="f-time">{e._at ? formatClock(e._at) : ''}</span>
@@ -334,12 +364,14 @@ function IncidentPanel({ incident, busy, onApprove, onReject }) {
         <span className={`badge ${severityClass(incident.severity)}`}>{incident.severity}</span>
       </div>
       <div className="panel-body">
+        <IncidentTiming incident={incident} />
+        <OutcomeBanner incident={incident} />
         {awaiting ? (
           <div className="approval">
             <h3>⚠ Agent recommends action — human approval required</h3>
             <p>
-              <strong>{incident.proposal?.action}</strong>{' '}
-              {JSON.stringify(incident.policy_decision?.granted_parameters || {})}
+              <strong>{readableAction(incident.proposal?.action)}</strong>{' '}
+              {paramText(incident.policy_decision?.granted_parameters)}
               <br />
               {incident.policy_decision?.reason}
             </p>
@@ -371,6 +403,67 @@ function IncidentPanel({ incident, busy, onApprove, onReject }) {
       </div>
     </section>
   )
+}
+
+/** The headline of what happened, so the outcome that matters most is not buried in the stage
+ *  list. A reverted intervention is the one worth showing loudest: acting is easy, noticing that
+ *  the action did not help and undoing it is the hard part. */
+function OutcomeBanner({ incident }) {
+  const v = incident.verification
+  const rolledBack = (incident.audit || []).some(
+    (a) => typeof a.approved_by === 'string' && a.approved_by.startsWith('policy_engine:rollback'),
+  )
+  if (rolledBack) {
+    return (
+      <div className="outcome reverted" role="status">
+        <h3>The fix did not work — so the agent undid it</h3>
+        <p>
+          The action executed, was measured against a concurrent control group, and produced no
+          real improvement. Rather than declare victory or thrash between routes, the agent rolled
+          its own change back and handed the incident to a human.
+        </p>
+      </div>
+    )
+  }
+  if (v && (v.status === 'RECOVERED' || v.status === 'PARTIALLY_RECOVERED')) {
+    return (
+      <div className="outcome recovered" role="status">
+        <h3>Recovery verified against a control group</h3>
+        <p>{v.explanation}</p>
+      </div>
+    )
+  }
+  if (incident.escalation) {
+    return (
+      <div className="outcome escalated" role="status">
+        <h3>Handed to a human</h3>
+        <p>{incident.escalation.reason}</p>
+      </div>
+    )
+  }
+  return null
+}
+
+function IncidentTiming({ incident }) {
+  const bits = []
+  if (incident.time_to_mitigate_s != null) {
+    bits.push(`acted ${Math.round(incident.time_to_mitigate_s)}s after detection`)
+  }
+  if (incident.opened_at) bits.push(`opened ${formatClock(incident.opened_at)}`)
+  if (incident.closed_at) bits.push(`closed ${formatClock(incident.closed_at)}`)
+  if (!bits.length) return null
+  return <div className="incident-timing">{bits.join(' · ')}</div>
+}
+
+function readableAction(action) {
+  return action ? action.replace(/_/g, ' ') : 'no action'
+}
+
+/** Granted parameters as prose. `{"max_shift_pct": 25}` reads as "max shift pct 25". */
+function paramText(params) {
+  const entries = Object.entries(params || {})
+  if (!entries.length) return ''
+  return entries.map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`).join(', ')
 }
 
 function buildStages(incident) {

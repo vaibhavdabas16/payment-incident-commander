@@ -522,3 +522,90 @@ body {
 }
 
 .speed { display: flex; align-items: center; gap: 6px; }
+
+/* ------------------------------------------------------- outcome banners */
+
+/* The outcome deserves more weight than any single stage row. Colour is always paired with a
+ * heading that states the outcome in words, so meaning never rests on hue alone. */
+.outcome {
+  border-radius: 8px;
+  padding: 13px 15px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+}
+
+.outcome h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.outcome p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.outcome.reverted { border-color: rgba(250, 178, 25, 0.5); background: rgba(250, 178, 25, 0.09); }
+.outcome.reverted h3 { color: var(--status-warning); }
+.outcome.recovered { border-color: rgba(12, 163, 12, 0.45); background: rgba(12, 163, 12, 0.09); }
+.outcome.recovered h3 { color: var(--status-good); }
+.outcome.escalated { border-color: rgba(236, 131, 90, 0.45); background: rgba(236, 131, 90, 0.08); }
+.outcome.escalated h3 { color: var(--status-serious); }
+
+.incident-timing {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ onboarding */
+
+.empty.onboarding {
+  text-align: left;
+  padding: 16px 4px 6px;
+  color: var(--text-secondary);
+}
+
+.empty.onboarding strong { display: block; color: var(--text-primary); font-size: 13.5px; margin-bottom: 7px; }
+.empty.onboarding p { margin: 0 0 9px; font-size: 12.5px; line-height: 1.6; }
+.empty.onboarding .hint { color: var(--text-muted); }
+.empty.onboarding em { color: var(--text-secondary); font-style: normal; font-weight: 600; }
+
+/* Scenario cards carry a tag saying what each one proves. */
+.scenario .s-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* --------------------------------------------------------- accessibility */
+
+/* Keyboard users must be able to see where they are. The console is dense, so the ring is drawn
+ * outside the element rather than inset, where a 1px border would swallow it. */
+:where(button, a, [tabindex]):focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Narrow screens: the tile row and scenario grid collapse rather than overflow. */
+@media (max-width: 620px) {
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scenario-grid { grid-template-columns: minmax(0, 1fr); }
+  .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .kv dt { margin-top: 6px; }
+}

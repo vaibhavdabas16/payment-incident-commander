@@ -184,6 +184,12 @@ def scenarios() -> dict[str, Any]:
                 "root_cause_id": s.root_cause_id,
                 "recommended_action": s.recommended_action,
                 "duration_s": s.duration_s,
+                # Lets the dashboard say what each scenario is *for* without hardcoding a list
+                # that can drift away from the scenarios themselves. A scenario that injects no
+                # effects is the restraint test; one whose fallback is unhealthy is the
+                # failed-intervention case that forces a rollback.
+                "injects_failure": bool(s.effects),
+                "fallback_healthy": s.fallback_healthy,
             }
             for s in SCENARIOS.values()
         ]
