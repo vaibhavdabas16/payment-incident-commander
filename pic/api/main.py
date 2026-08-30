@@ -190,6 +190,11 @@ def scenarios() -> dict[str, Any]:
                 # failed-intervention case that forces a rollback.
                 "injects_failure": bool(s.effects),
                 "fallback_healthy": s.fallback_healthy,
+                # So the dashboard can show what is already running, rather than letting a
+                # visitor stack degradations without realising it.
+                "active": any(
+                    a.scenario.scenario_id == s.scenario_id for a in engine.simulator.active
+                ),
             }
             for s in SCENARIOS.values()
         ]
@@ -275,6 +280,15 @@ def control(command: str, speedup: float | None = None) -> dict[str, Any]:
         _state["running"] = True
     elif command == "speed" and speedup is not None:
         _state["speedup"] = max(1.0, min(600.0, speedup))
+    elif command == "reset":
+        # A shared demo needs a way back to a clean baseline. Without it, scenarios accumulate:
+        # three overlapping degradations leave the merchant at 55% success, and every new
+        # injection correlates into the incident already open instead of showing up as its own -
+        # so the button looks broken when it is working exactly as designed.
+        engine.simulator.deactivate_all()
+        engine.supervisor.incidents.clear()
+        engine.supervisor._incident_seq = 0
+        engine.detector._degraded_periods.clear()
     else:
         raise HTTPException(status_code=400, detail=f"unknown command {command}")
     return {"running": _state["running"], "speedup": _state["speedup"]}

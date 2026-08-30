@@ -790,3 +790,33 @@ body {
 
 .footer strong { color: var(--text-secondary); font-weight: 620; }
 .footer-right { font-family: var(--mono); }
+
+/* ------------------------------------------------- injection feedback */
+
+.head-actions { display: flex; align-items: center; gap: 10px; }
+
+.panel-lede {
+  margin: 0 0 12px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+/* Clicking inject has no visible effect for a few seconds while traffic accumulates, so say so
+ * rather than leaving the page looking unresponsive. */
+.notice {
+  margin: 0 0 12px;
+  padding: 10px 13px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+}
+
+.notice.injected { border-color: rgba(57, 135, 229, 0.45); background: rgba(57, 135, 229, 0.09); }
+.notice.reset { border-color: rgba(12, 163, 12, 0.4); background: rgba(12, 163, 12, 0.08); }
+
+/* A scenario already running is marked, so failures are not stacked unknowingly. */
+.scenario.running { border-color: rgba(250, 178, 25, 0.45); background: rgba(250, 178, 25, 0.06); }

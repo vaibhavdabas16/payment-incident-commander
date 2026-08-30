@@ -23,6 +23,7 @@ export default function App() {
   const [evaluation, setEvaluation] = useState(null)
   const [agents, setAgents] = useState([])
   const [view, setView] = useState(readView)
+  const [notice, setNotice] = useState(null)
   const [status, setStatus] = useState('connecting')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -103,6 +104,25 @@ export default function App() {
     }
   }
 
+  // Clicking inject used to give no sign that anything had happened: detection takes a few
+  // seconds of simulated traffic, so the page sat unchanged and the button looked broken.
+  const inject = async (scenario) => {
+    setNotice({
+      kind: 'injected',
+      text: `Injected "${scenario.name}". Detection needs a few seconds of traffic — the incident
+             will appear on the right when three independent tests agree.`,
+    })
+    await act(() => api.trigger(scenario.scenario_id))
+  }
+
+  const reset = async () => {
+    setNotice({ kind: 'reset', text: 'Cleared every running scenario and incident.' })
+    await act(() => api.control('reset'))
+    setSelectedId(null)
+    setDetail(null)
+    pinned.current = false
+  }
+
   const live = incidents.find((i) => i.awaiting_approval) || incidents[0] || null
 
   return (
@@ -121,7 +141,10 @@ export default function App() {
       <Hero
         report={evaluation}
         busy={busy}
-        onDemo={() => act(() => api.trigger('SCN-UPI-PSP-BADFALLBACK'))}
+        onDemo={() => {
+          const s = scenarios.find((x) => x.scenario_id === 'SCN-UPI-PSP-BADFALLBACK')
+          return s ? inject(s) : act(() => api.trigger('SCN-UPI-PSP-BADFALLBACK'))
+        }}
       />
 
       <Tiles metrics={metrics} />
@@ -138,7 +161,13 @@ export default function App() {
             </div>
           </section>
 
-          <ScenarioPanel scenarios={scenarios} busy={busy} onTrigger={(id) => act(() => api.trigger(id))} />
+          <ScenarioPanel
+            scenarios={scenarios}
+            busy={busy}
+            notice={notice}
+            onTrigger={inject}
+            onReset={reset}
+          />
 
           <section className="panel">
             <div className="panel-head">
@@ -162,8 +191,10 @@ export default function App() {
                 <div className="empty onboarding">
                   <strong>Nothing is broken right now.</strong>
                   <p>
-                    Inject a scenario below. The agents will observe, investigate, diagnose, ask
-                    the policy gateway for permission, act — and then check their own work.
+                    Use <strong>Inject an incident</strong> at the bottom left. Within a few
+                    seconds an incident appears here; click it to follow the agents observe,
+                    investigate, diagnose, ask the policy gateway for permission, act — and then
+                    check their own work.
                   </p>
                   <p className="hint">
                     Start with <em>UPI rails degraded network-wide</em>, where the obvious fix
@@ -436,28 +467,46 @@ function scenarioTag(s) {
   return null
 }
 
-function ScenarioPanel({ scenarios, busy, onTrigger }) {
+function ScenarioPanel({ scenarios, busy, notice, onTrigger, onReset }) {
+  const running = scenarios.filter((s) => s.active).length
   return (
     <section className="panel">
       <div className="panel-head">
         <h2>Inject an incident</h2>
-        <span className="clock">{scenarios.length} scenarios</span>
+        <div className="head-actions">
+          <span className="clock">
+            {running ? `${running} running` : `${scenarios.length} scenarios`}
+          </span>
+          <button className="btn small" disabled={busy || !running} onClick={onReset}>
+            Reset
+          </button>
+        </div>
       </div>
       <div className="panel-body">
+        <p className="panel-lede">
+          Pick one. The agents will detect it within a few seconds of simulated traffic, then work
+          the incident on the right. Injecting several at once stacks the failures and makes the
+          diagnosis genuinely ambiguous — use Reset to get back to a clean baseline.
+        </p>
+        {notice ? <div className={`notice ${notice.kind}`}>{notice.text}</div> : null}
         <div className="scenario-grid">
           {scenarios.map((s) => {
             const tag = scenarioTag(s)
             return (
               <button
                 key={s.scenario_id}
-                className="btn scenario"
+                className={`btn scenario ${s.active ? 'running' : ''}`}
                 disabled={busy}
                 title={s.description}
-                onClick={() => onTrigger(s.scenario_id)}
+                onClick={() => onTrigger(s)}
               >
                 <span className="s-head">
                   <span className="s-name">{s.name}</span>
-                  {tag ? <span className={`badge ${tag.tone}`}>{tag.text}</span> : null}
+                  {s.active ? (
+                    <span className="badge medium">running</span>
+                  ) : tag ? (
+                    <span className={`badge ${tag.tone}`}>{tag.text}</span>
+                  ) : null}
                 </span>
                 <span className="s-desc">{s.description.slice(0, 118)}…</span>
               </button>
