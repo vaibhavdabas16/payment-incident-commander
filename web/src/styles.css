@@ -897,3 +897,136 @@ body {
 
 .tech > summary:hover { color: var(--text-secondary); }
 .tech[open] > summary { margin-bottom: 10px; }
+
+/* ------------------------------------------------ incident-focused layout */
+
+/* Once an incident exists it is the subject of the page. The picker that started it steps aside
+ * rather than competing with the thing it produced. */
+.panel.aside { opacity: 0.72; }
+.panel.aside:hover, .panel.aside:focus-within { opacity: 1; }
+.panel.aside .scenario-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+
+.incident-switch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.switch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 6px 11px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.switch-chip:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.switch-chip.selected {
+  border-color: var(--series-1);
+  color: var(--text-primary);
+  background: rgba(57, 135, 229, 0.1);
+}
+
+/* --------------------------------------------------------- walkthrough */
+
+/* A first-time visitor is walked through the system rather than dropped into a running console.
+ * The step comes from the incident's real state, so the page cannot claim to be somewhere the
+ * system is not. */
+.walk { display: flex; flex-direction: column; gap: 20px; }
+
+.stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  list-style: none;
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+}
+
+.step { display: flex; align-items: center; gap: 9px; font-size: 12.5px; }
+
+.step-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-family: var(--mono);
+  font-size: 11px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+  color: var(--text-muted);
+}
+
+.step.todo .step-l { color: var(--text-muted); }
+.step.past .step-n { background: var(--status-good); border-color: var(--status-good); color: #04120a; }
+.step.past .step-l { color: var(--text-secondary); }
+.step.now .step-n { background: var(--series-1); border-color: var(--series-1); color: #04121f; font-weight: 700; }
+.step.now .step-l { color: var(--text-primary); font-weight: 620; }
+
+.walk-body {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-1);
+  padding: 24px 26px 26px;
+}
+
+.walk-body > h2 {
+  margin: 0 0 10px;
+  font-size: 22px;
+  line-height: 1.3;
+  letter-spacing: -0.012em;
+}
+
+.walk-lede {
+  margin: 0 0 18px;
+  font-size: 13.5px;
+  line-height: 1.68;
+  color: var(--text-secondary);
+  max-width: 78ch;
+}
+
+.walk-h3 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
+.walk-foot { margin: 16px 0 0; font-size: 11.5px; color: var(--text-muted); }
+.walk-rationale { color: var(--text-muted) !important; font-size: 12px !important; }
+
+.walk-points {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+  margin: 4px 0 18px;
+}
+
+.walk-points > div {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  padding: 13px 15px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.walk-points strong { display: block; color: var(--text-primary); margin-bottom: 4px; }
+
+.walk-body .grid { margin-top: 18px; }
+.walk-body .story { background: var(--surface-0); }

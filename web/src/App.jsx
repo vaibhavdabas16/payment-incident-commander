@@ -4,12 +4,12 @@ import { api, connectStream, formatINR, formatClock, formatPct, severityClass } 
 
 const POLL_MS = 1500
 
-const VIEW_KEYS = ['command', 'agents', 'benchmark']
+const VIEW_KEYS = ['walkthrough', 'command', 'agents', 'benchmark']
 
 /** The open tab lives in the URL hash so a section can be linked to directly. */
 function readView() {
   const hash = typeof window !== 'undefined' ? window.location.hash.replace('#', '') : ''
-  return VIEW_KEYS.includes(hash) ? hash : 'command'
+  return VIEW_KEYS.includes(hash) ? hash : 'walkthrough'
 }
 
 export default function App() {
@@ -123,6 +123,8 @@ export default function App() {
     pinned.current = false
   }
 
+  // Once an incident exists it becomes the subject of the page rather than one panel of six.
+  const focused = Boolean(detail && incidents.length)
   const live = incidents.find((i) => i.awaiting_approval) || incidents[0] || null
 
   return (
@@ -136,103 +138,134 @@ export default function App() {
         </div>
       ) : null}
 
+      {view === 'walkthrough' ? (
+        <Walkthrough
+          scenarios={scenarios}
+          incidents={incidents}
+          incident={detail}
+          metrics={metrics}
+          series={series}
+          report={evaluation}
+          events={events}
+          busy={busy}
+          notice={notice}
+          onInject={inject}
+          onReset={reset}
+          onApprove={() => act(() => api.approve(detail.incident_id))}
+          onReject={() => act(() => api.reject(detail.incident_id))}
+        />
+      ) : null}
+
       {view === 'command' ? (
         <>
-      <Hero
-        report={evaluation}
-        busy={busy}
-        onDemo={() => {
-          const s = scenarios.find((x) => x.scenario_id === 'SCN-UPI-PSP-BADFALLBACK')
-          return s ? inject(s) : act(() => api.trigger('SCN-UPI-PSP-BADFALLBACK'))
-        }}
-      />
+          {focused ? null : (
+            <Hero
+              report={evaluation}
+              busy={busy}
+              onDemo={() => {
+                const s = scenarios.find((x) => x.scenario_id === 'SCN-UPI-PSP-BADFALLBACK')
+                return s ? inject(s) : act(() => api.trigger('SCN-UPI-PSP-BADFALLBACK'))
+              }}
+            />
+          )}
 
-      <Tiles metrics={metrics} />
+          <Tiles metrics={metrics} />
 
-      <div className="grid">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Payment success rate</h2>
-              <span className="clock">{metrics ? `${metrics.transactions} payments in window` : ''}</span>
-            </div>
-            <div className="panel-body">
-              <SuccessRateChart points={series} baseline={metrics?.baseline_success_rate} />
-            </div>
-          </section>
-
-          <ScenarioPanel
-            scenarios={scenarios}
-            busy={busy}
-            notice={notice}
-            onTrigger={inject}
-            onReset={reset}
-          />
-
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Agent event stream</h2>
-              <span className="clock">{status}</span>
-            </div>
-            <div className="panel-body tight">
-              <EventFeed events={events} />
-            </div>
-          </section>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Incidents</h2>
-              <span className="clock">{incidents.length} total</span>
-            </div>
-            <div className="panel-body">
-              {incidents.length === 0 ? (
-                <div className="empty onboarding">
-                  <strong>Nothing is broken right now.</strong>
-                  <p>
-                    Use <strong>Inject an incident</strong> at the bottom left. Within a few
-                    seconds an incident appears here; click it to follow the agents observe,
-                    investigate, diagnose, ask the policy gateway for permission, act — and then
-                    check their own work.
-                  </p>
-                  <p className="hint">
-                    Start with <em>UPI rails degraded network-wide</em>, where the obvious fix
-                    cannot work. The agent measures the result against a concurrent control group
-                    and, instead of declaring victory, either reverts its own change or hands the
-                    incident to a human.
-                  </p>
-                </div>
-              ) : (
-                <div className="incident-list">
+          {focused ? (
+            <>
+              {incidents.length > 1 ? (
+                <div className="incident-switch">
                   {incidents.slice(0, 6).map((i) => (
                     <button
                       key={i.incident_id}
-                      className={`incident-row ${i.incident_id === selectedId ? 'selected' : ''}`}
+                      className={`switch-chip ${i.incident_id === selectedId ? 'selected' : ''}`}
                       onClick={() => {
                         pinned.current = true
                         setSelectedId(i.incident_id)
                       }}
                     >
-                      <span className="r-id">{i.incident_id}</span>
                       <span className={`badge ${severityClass(i.severity)}`}>{i.severity}</span>
-                      <span className="r-title">{i.title}</span>
-                      <span className={`badge ${outcomeBadge(i)}`}>{shortState(i)}</span>
+                      {i.incident_id} · {shortState(i)}
                     </button>
                   ))}
                 </div>
-              )}
-            </div>
-          </section>
+              ) : null}
 
-          <IncidentPanel
-            incident={detail}
-            busy={busy}
-            onApprove={() => act(() => api.approve(detail.incident_id))}
-            onReject={() => act(() => api.reject(detail.incident_id))}
-          />
-        </div>
-      </div>
+              <IncidentPanel
+                incident={detail}
+                busy={busy}
+                onApprove={() => act(() => api.approve(detail.incident_id))}
+                onReject={() => act(() => api.reject(detail.incident_id))}
+              />
+
+              <div className="grid">
+                <section className="panel">
+                  <div className="panel-head">
+                    <h2>Payment success rate</h2>
+                    <span className="clock">
+                      {metrics ? `${metrics.transactions} payments in window` : ''}
+                    </span>
+                  </div>
+                  <div className="panel-body">
+                    <SuccessRateChart points={series} baseline={metrics?.baseline_success_rate} />
+                  </div>
+                </section>
+
+                <section className="panel">
+                  <div className="panel-head">
+                    <h2>What the agents are doing</h2>
+                    <span className="clock">{status}</span>
+                  </div>
+                  <div className="panel-body tight">
+                    <EventFeed events={events} />
+                  </div>
+                </section>
+              </div>
+
+              <ScenarioPanel
+                scenarios={scenarios}
+                busy={busy}
+                notice={notice}
+                onTrigger={inject}
+                onReset={reset}
+                collapsed
+              />
+            </>
+          ) : (
+            <div className="grid">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                <section className="panel">
+                  <div className="panel-head">
+                    <h2>Payment success rate</h2>
+                    <span className="clock">
+                      {metrics ? `${metrics.transactions} payments in window` : ''}
+                    </span>
+                  </div>
+                  <div className="panel-body">
+                    <SuccessRateChart points={series} baseline={metrics?.baseline_success_rate} />
+                  </div>
+                </section>
+
+                <section className="panel">
+                  <div className="panel-head">
+                    <h2>What the agents are doing</h2>
+                    <span className="clock">{status}</span>
+                  </div>
+                  <div className="panel-body tight">
+                    <EventFeed events={events} />
+                  </div>
+                </section>
+              </div>
+
+              <ScenarioPanel
+                scenarios={scenarios}
+                busy={busy}
+                notice={notice}
+                onTrigger={inject}
+                onReset={reset}
+              />
+            </div>
+          )}
         </>
       ) : null}
 
@@ -252,6 +285,204 @@ export default function App() {
       <Footer report={evaluation} />
     </div>
   )
+}
+
+/* ---------------------------------------------------------- walkthrough */
+
+const STEPS = [
+  ['Choose a situation', 'Pick something that can go wrong with payments.'],
+  ['The agents investigate', 'They look for what changed, price it, and work out why.'],
+  ['You decide', 'Anything risky stops here and waits for a person.'],
+  ['What came of it', 'The action is measured, and undone if it did not help.'],
+]
+
+/** Which step the visitor is on, derived from the incident rather than from clicks, so the page
+ *  cannot claim to be somewhere the system is not. */
+function currentStep(incident) {
+  if (!incident) return 0
+  if (incident.state === 'AWAITING_HUMAN_APPROVAL') return 2
+  if (incident.state === 'CLOSED') return 3
+  return 1
+}
+
+function Walkthrough(props) {
+  const { scenarios, incident, metrics, series, report, events, busy, notice } = props
+  const step = currentStep(incident)
+  return (
+    <section className="walk">
+      <Stepper step={step} />
+      {step === 0 ? <StepChoose {...props} /> : null}
+      {step === 1 ? <StepWorking incident={incident} events={events} series={series} metrics={metrics} /> : null}
+      {step === 2 ? <StepDecide {...props} /> : null}
+      {step === 3 ? <StepOutcome {...props} /> : null}
+    </section>
+  )
+}
+
+function Stepper({ step }) {
+  return (
+    <ol className="stepper" aria-label="Progress">
+      {STEPS.map(([label], i) => (
+        <li key={label} className={`step ${i === step ? 'now' : i < step ? 'past' : 'todo'}`}>
+          <span className="step-n">{i < step ? '✓' : i + 1}</span>
+          <span className="step-l">{label}</span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+function StepChoose({ scenarios, busy, notice, onInject, report }) {
+  const d = report?.detection
+  return (
+    <div className="walk-body">
+      <h2>Payments are failing. Something has to work out why, and quickly.</h2>
+      <p className="walk-lede">
+        This runs a live simulation of a merchant taking payments. Break something below and watch
+        eight agents observe it, investigate, price the damage, diagnose the cause, ask a
+        deterministic policy gateway for permission, act — and then check whether their own fix
+        actually worked.
+        {d ? ` Across a reproducible benchmark it detects with ${formatPct(d.precision, 1)} precision.` : ''}
+      </p>
+      {notice ? <div className={`notice ${notice.kind}`}>{notice.text}</div> : null}
+      <h3 className="walk-h3">Pick a situation</h3>
+      <div className="scenario-grid">
+        {scenarios.map((s) => {
+          const tag = scenarioTag(s)
+          return (
+            <button
+              key={s.scenario_id}
+              className={`btn scenario ${s.active ? 'running' : ''}`}
+              disabled={busy}
+              title={s.description}
+              onClick={() => onInject(s)}
+            >
+              <span className="s-head">
+                <span className="s-name">{s.name}</span>
+                {s.active ? (
+                  <span className="badge medium">running</span>
+                ) : tag ? (
+                  <span className={`badge ${tag.tone}`}>{tag.text}</span>
+                ) : null}
+              </span>
+              <span className="s-desc">{s.description.slice(0, 118)}…</span>
+            </button>
+          )
+        })}
+      </div>
+      <p className="walk-foot">
+        Nothing here is scripted. The same detector, agents, policy gateway and tools run whether
+        you are watching or the benchmark is.
+      </p>
+    </div>
+  )
+}
+
+function StepWorking({ incident, events, series, metrics }) {
+  const stages = buildStages(incident)
+  const active = stages.find((s) => s.status === 'active')
+  return (
+    <div className="walk-body">
+      <h2>{active ? `${active.title}…` : 'Working the incident…'}</h2>
+      <p className="walk-lede">
+        {incident.incident_id} is open. Each agent has one job and hands on a typed result; the
+        page below updates as they finish.
+      </p>
+      <StageStrip stages={stages} />
+      <IncidentStory incident={incident} />
+      <div className="grid">
+        <section className="panel">
+          <div className="panel-head"><h2>Payment success rate</h2></div>
+          <div className="panel-body">
+            <SuccessRateChart points={series} baseline={metrics?.baseline_success_rate} />
+          </div>
+        </section>
+        <section className="panel">
+          <div className="panel-head"><h2>What the agents are doing</h2></div>
+          <div className="panel-body tight"><EventFeed events={events} /></div>
+        </section>
+      </div>
+    </div>
+  )
+}
+
+function StepDecide({ incident, busy, onApprove, onReject }) {
+  const p = incident.proposal
+  const pd = incident.policy_decision
+  return (
+    <div className="walk-body">
+      <h2>The agents want to act. This one is your call.</h2>
+      <p className="walk-lede">
+        The policy gateway is plain Python evaluating the merchant's own rules — no model is
+        involved in this decision, and the Action Agent physically cannot run a write tool without
+        it. Here it stopped and asked for a person.
+      </p>
+      <IncidentStory incident={incident} />
+      <div className="approval">
+        <h3>⚠ {readableAction(p?.action)} {paramText(pd?.granted_parameters)}</h3>
+        <p>{pd?.reason}</p>
+        {p?.rationale ? <p className="walk-rationale">{p.rationale}</p> : null}
+        <div className="actions">
+          <button className="btn primary lg" disabled={busy} onClick={onApprove}>
+            Approve and execute
+          </button>
+          <button className="btn danger lg" disabled={busy} onClick={onReject}>
+            Reject
+          </button>
+        </div>
+      </div>
+      <p className="walk-foot">
+        Either choice is recorded in the audit trail against your name. Rejecting hands the
+        incident to a human with the evidence attached.
+      </p>
+    </div>
+  )
+}
+
+function StepOutcome({ incident, busy, onReset, report }) {
+  const v = incident.verification
+  const rel = report?.reliability
+  return (
+    <div className="walk-body">
+      <h2>{outcomeHeadline(incident)}</h2>
+      <StageStrip stages={buildStages(incident)} />
+      <OutcomeBanner incident={incident} />
+      <IncidentStory incident={incident} />
+      <div className="walk-points">
+        <div>
+          <strong>It measured its own work.</strong>
+          {v?.control_used
+            ? ' Against a control group deliberately left alone, so the incident recovering on its own could not be mistaken for the fix working.'
+            : ' Before and after the change, and reported the result whichever way it went.'}
+        </div>
+        <div>
+          <strong>It stopped where it should.</strong>
+          {rel
+            ? ` Across the benchmark: ${rel.policy_violations} policy violations and ${rel.unauthorised_executions} unauthorised executions.`
+            : ' Nothing ran without a policy decision naming that exact action.'}
+        </div>
+      </div>
+      <div className="actions">
+        <button className="btn primary lg" disabled={busy} onClick={onReset}>
+          Try another situation
+        </button>
+      </div>
+      <details className="tech">
+        <summary>Show the working — evidence, arithmetic and statistics</summary>
+        <IncidentPanel incident={incident} busy={busy} onApprove={() => {}} onReject={() => {}} />
+      </details>
+    </div>
+  )
+}
+
+function outcomeHeadline(incident) {
+  const v = incident.verification
+  if ((incident.audit || []).some((a) => String(a.approved_by || '').startsWith('policy_engine:rollback')))
+    return 'The fix did not work, so the agent undid it.'
+  if (v?.status === 'RECOVERED') return 'Payments recovered, and it proved it.'
+  if (v?.status === 'PARTIALLY_RECOVERED') return 'Partly recovered — and it says so rather than claiming victory.'
+  if (incident.escalation) return 'It stopped and handed the incident to a human.'
+  return 'The incident is closed.'
 }
 
 /* --------------------------------------------------------------- hero/nav */
@@ -382,7 +613,8 @@ function Footer({ report }) {
 /* ------------------------------------------------------------------ parts */
 
 const VIEWS = [
-  ['command', 'Command Center'],
+  ['walkthrough', 'Walkthrough'],
+  ['command', 'Console'],
   ['agents', 'Agent Fleet'],
   ['benchmark', 'Benchmark'],
 ]
@@ -467,10 +699,10 @@ function scenarioTag(s) {
   return null
 }
 
-function ScenarioPanel({ scenarios, busy, notice, onTrigger, onReset }) {
+function ScenarioPanel({ scenarios, busy, notice, onTrigger, onReset, collapsed = false }) {
   const running = scenarios.filter((s) => s.active).length
   return (
-    <section className="panel">
+    <section className={`panel ${collapsed ? 'aside' : ''}`}>
       <div className="panel-head">
         <h2>Inject an incident</h2>
         <div className="head-actions">
@@ -759,7 +991,9 @@ function IncidentStory({ incident }) {
   }
   if (v) {
     beats.push({ q: 'Did it work', a: verificationInWords(v) })
-  } else if (incident.escalation) {
+  } else if (incident.escalation && incident.state !== 'AWAITING_HUMAN_APPROVAL') {
+    // While the decision is still open the incident has not ended, whatever the escalation
+    // record says - claiming otherwise contradicts the buttons directly underneath.
     beats.push({
       q: 'How it ended',
       a: `Handed to a human. ${incident.escalation.reason}`,
