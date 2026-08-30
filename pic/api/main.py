@@ -222,6 +222,62 @@ _AGENT_SUMMARY = {
 }
 
 
+@app.get("/api/health/segments")
+def segment_health(minutes: int = 5) -> dict[str, Any]:
+    """Live health per payment method, provider and issuer.
+
+    Real measurements from the event store against each segment's own baseline - the dashboard
+    shows where a degradation actually sits rather than a decorative status board.
+    """
+    from datetime import timedelta
+
+    end = engine.simulator.now
+    start = end - timedelta(minutes=minutes)
+    base = engine.detector.baseline(end)
+
+    def rows(dimension: str) -> list[dict[str, Any]]:
+        out = []
+        for stat in engine.store.segment_stats(
+            start, end, dimension, base.start, base.end, min_volume=15
+        ):
+            deviation = stat.deviation
+            # Bands mirror the detector's severity thinking, so the colour on screen and the
+            # threshold that opens an incident cannot drift apart.
+            if deviation is None:
+                status = "unknown"
+            elif deviation <= -settings.detection.severity_bands[1]:
+                status = "critical"
+            elif deviation <= -settings.detection.severity_bands[0]:
+                status = "degraded"
+            elif deviation <= -0.02:
+                status = "watch"
+            else:
+                status = "healthy"
+            out.append(
+                {
+                    "segment": stat.segment.dimensions.get(dimension),
+                    "success_rate": round(stat.success_rate, 4),
+                    "baseline_success_rate": (
+                        round(stat.baseline_success_rate, 4)
+                        if stat.baseline_success_rate is not None
+                        else None
+                    ),
+                    "deviation": round(deviation, 4) if deviation is not None else None,
+                    "transactions": stat.total,
+                    "failure_share": round(stat.failure_share, 4),
+                    "status": status,
+                }
+            )
+        return sorted(out, key=lambda r: r["deviation"] if r["deviation"] is not None else 0)
+
+    return {
+        "window_minutes": minutes,
+        "payment_method": rows("payment_method"),
+        "psp": rows("psp"),
+        "issuer": rows("issuer"),
+    }
+
+
 @app.get("/api/agents")
 def agents() -> dict[str, Any]:
     """The agent pipeline, in the order the supervisor runs it."""
