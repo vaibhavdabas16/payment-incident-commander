@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Landing from './Landing.jsx'
 import { api, connectStream, formatClock } from './api.js'
 import { Led } from './components.jsx'
-import { Agents, Benchmark, CommandCenter, Health, Incidents, Investigation } from './pages.jsx'
+import { Agents, Benchmark, CommandCenter, Health, Incidents } from './pages.jsx'
 import Simulate from './Simulate.jsx'
 
 const POLL_MS = 1500
@@ -11,7 +11,6 @@ const NAV = [
   ['command', 'Command Center', 'ico-grid'],
   ['incidents', 'Incidents', 'ico-pulse'],
   ['simulate', 'Simulate', 'ico-time'],
-  ['investigation', 'AI Investigation', 'ico-agent'],
   ['health', 'Payment Health', 'ico-heart'],
   ['analytics', 'Analytics', 'ico-chart'],
 ]
@@ -235,7 +234,6 @@ export default function App() {
           {page === 'incidents' ? (
             <Incidents {...shared} selectedId={selectedId} onOpen={openInList} onApprove={approve} onReject={reject} />
           ) : null}
-          {page === 'investigation' ? <Investigation incident={detail} agents={agents} busy={busy} onApprove={approve} onReject={reject} /> : null}
           {page === 'health' ? <Health health={health} metrics={metrics} series={series} /> : null}
           {page === 'simulate' ? (
             <Simulate

@@ -284,7 +284,13 @@ export function Workflow({ incident }) {
   const ar = incident.action_result
   const v = incident.verification
   const esc = incident.escalation
-  const stepFor = (agent) => (incident.steps || []).find((s) => s.agent === agent)
+  const steps = incident.steps || []
+  const stepFor = (agent) => steps.find((s) => s.agent === agent)
+  // How many times each agent ran. Collapsing the pipeline into one row per stage is what
+  // makes it readable, but it also hides a second attempt - and an incident that proposed,
+  // acted, failed verification and went round again is a materially different story from one
+  // that went straight through.
+  const runsFor = (agent) => steps.filter((s) => s.agent === agent).length
 
   const stages = [
     {
@@ -403,7 +409,9 @@ export function Workflow({ incident }) {
     <ol className="wf">
       {stages.map((s, i) => {
         const state = s.failed ? 'failed' : s.blocked && s.done ? 'blocked' : s.done ? 'done' : s.running ? 'running' : 'todo'
-        const step = stepFor(({ detect: 'detection', investigate: 'investigation', impact: 'impact', diagnose: 'root_cause', decide: 'decision', execute: 'action', verify: 'verification', escalate: 'escalation' })[s.key])
+        const agent = ({ detect: 'detection', investigate: 'investigation', impact: 'impact', diagnose: 'root_cause', decide: 'decision', execute: 'action', verify: 'verification', escalate: 'escalation' })[s.key]
+        const step = stepFor(agent)
+        const runs = agent ? runsFor(agent) : 0
         return (
           <li className={`wf-step ${state}`} key={s.key}>
             <span className="wf-dot">{state === 'done' ? '✓' : state === 'failed' ? '✕' : state === 'blocked' ? '!' : i + 1}</span>
@@ -413,6 +421,7 @@ export function Workflow({ incident }) {
                 {s.tag ? <Tag tone={s.tag.tone}>{s.tag.text}</Tag> : null}
                 {state === 'running' ? <Tag tone="agent">working</Tag> : null}
                 {state === 'todo' ? <Tag tone="mute">not reached</Tag> : null}
+                {runs > 1 ? <Tag tone="warn">{`ran ${runs}\u00d7`}</Tag> : null}
                 {step ? <span className="wf-when">{formatClock(step.started_at)}</span> : null}
               </div>
               {s.lead ? <div className="wf-lead">{s.lead}</div> : null}
@@ -423,6 +432,23 @@ export function Workflow({ incident }) {
         )
       })}
     </ol>
+  )
+}
+
+/** The unedited step sequence, repeats and all.
+ *
+ *  The workflow above is one row per stage, which is what makes it readable. This is what actually
+ *  happened, in order: a second proposal after a failed verification appears here as a second
+ *  decision, and nowhere else.
+ */
+export function ActivityLog({ incident }) {
+  const steps = incident?.steps || []
+  if (!steps.length) return null
+  return (
+    <details className="more">
+      <summary>{`Full activity log \u2014 ${steps.length} steps in the order they ran`}</summary>
+      <Timeline incident={incident} />
+    </details>
   )
 }
 

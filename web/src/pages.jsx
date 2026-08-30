@@ -1,9 +1,6 @@
 import SuccessRateChart from './Chart.jsx'
-import { formatINR, formatPct, formatClock, severityClass } from './api.js'
 import {
-  AgentTrace, Card, Empty, ErrorBox, Evidence, EventFeed, HealthBars, Hypotheses, Led, Metric,
-  Skeleton, Tag, Timeline, Workflow, confidenceInWords, impactFacts, paramText, readableAction,
-  severityTone, statusTone,
+  ActivityLog, AgentTrace, Card, Empty, ErrorBox, Evidence, HealthBars, Led, Skeleton, Tag, Workflow, confidenceInWords, impactFacts, readableAction, severityTone, statusTone,
 } from './components.jsx'
 
 /* Pages. Every figure comes from the API; where the system has not produced something yet the
@@ -243,124 +240,6 @@ function IncidentBanner({ incident, summary, resolved, busy, onOpen, onApprove, 
   )
 }
 
-/* ============================================================ investigation */
-
-export function Investigation({ incident, agents, busy, onApprove, onReject }) {
-  if (!incident) {
-    return (
-      <>
-        <div className="page-head"><div><h1>AI Investigation</h1><p>Agent-by-agent investigation of an open incident.</p></div></div>
-        <Card><Empty title="Nothing under investigation" body="Open an incident from the Command Center and the full investigation trail appears here." facts={[{ label: 'Agents idle and monitoring', tone: 'agent', live: true }]} /></Card>
-      </>
-    )
-  }
-  const rc = incident.root_cause
-  const im = incident.impact
-  return (
-    <>
-      <div className="page-head">
-        <div>
-          <h1>AI Investigation</h1>
-          <p>{incident.incident_id} · {incident.title}</p>
-        </div>
-        <span className="pill"><Led tone={incident.state === 'CLOSED' ? 'ok' : 'agent'} live={incident.state !== 'CLOSED'} />{incident.state.replace(/_/g, ' ').toLowerCase()}</span>
-      </div>
-
-      <div className="grid-73">
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <Card title="Investigation timeline" sub={`${incident.steps?.length || 0} steps`}>
-            <Timeline incident={incident} />
-          </Card>
-          <Card title="Agent trace" sub="one responsibility each" flush>
-            <AgentTrace incident={incident} agents={agents} />
-          </Card>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <Card title="Root cause assessment" sub={rc ? `${rc.reasoner} reasoner` : ''}>
-            {rc ? (
-              <>
-                <div style={{ fontSize: 14, fontWeight: 550, marginBottom: 4 }}>{rc.most_likely_root_cause}</div>
-                <div style={{ fontSize: 12.5, color: 'var(--text-2)', marginBottom: 14 }}>
-                  {confidenceInWords(rc.confidence)}{rc.ambiguous ? ' · flagged ambiguous' : ''}
-                </div>
-                <Hypotheses rootCause={rc} />
-                <details className="more">
-                  <summary>Supporting evidence</summary>
-                  <Evidence incident={incident} />
-                </details>
-              </>
-            ) : <Skeleton rows={4} />}
-          </Card>
-
-          <Card title="Business impact">
-            {im ? (
-              <>
-                <div className="inc-facts" style={{ marginTop: 0, paddingTop: 0, borderTop: 'none' }}>
-                  {impactFacts(incident).map(([k, v]) => (
-                    <div key={k}><div className="inc-fact-k">{k}</div><div className="inc-fact-v">{v}</div></div>
-                  ))}
-                </div>
-                <details className="more">
-                  <summary>How this was calculated</summary>
-                  <ol className="calc">{im.calculation.map((l, i) => <li key={i}>{l}</li>)}</ol>
-                </details>
-              </>
-            ) : <Skeleton rows={3} />}
-          </Card>
-
-          <Recommendations incident={incident} busy={busy} onApprove={onApprove} onReject={onReject} />
-        </div>
-      </div>
-    </>
-  )
-}
-
-function Recommendations({ incident, busy, onApprove, onReject }) {
-  const p = incident.proposal
-  const pd = incident.policy_decision
-  const v = incident.verification
-  if (!p) return <Card title="Recommended actions"><Skeleton rows={2} /></Card>
-  const awaiting = incident.state === 'AWAITING_HUMAN_APPROVAL'
-  return (
-    <Card title="Recommended actions">
-      <div className="rec">
-        <div className="rec-top">
-          <span className="rec-p">PRIORITY 1</span>
-          {pd ? <Tag tone={pd.approved ? 'ok' : pd.requires_human ? 'warn' : 'crit'}>{pd.outcome.replace(/_/g, ' ').toLowerCase()}</Tag> : null}
-        </div>
-        <h4>{readableAction(p.action)} {paramText(pd?.granted_parameters || p.parameters)}</h4>
-        <p>{p.rationale}</p>
-        {pd ? <p style={{ color: 'var(--text-3)' }}>{pd.reason}</p> : null}
-        {awaiting ? (
-          <div className="rec-actions">
-            <button className="btn primary" disabled={busy} onClick={onApprove}>Execute mitigation</button>
-            <button className="btn danger" disabled={busy} onClick={onReject}>Reject</button>
-          </div>
-        ) : null}
-      </div>
-
-      {v ? (
-        <div className="rec">
-          <div className="rec-top">
-            <span className="rec-p">VERIFIED</span>
-            <Tag tone={v.status === 'RECOVERED' ? 'ok' : v.status === 'PARTIALLY_RECOVERED' ? 'warn' : 'crit'}>{v.status.replace(/_/g, ' ').toLowerCase()}</Tag>
-          </div>
-          <p>{v.explanation}</p>
-        </div>
-      ) : null}
-
-      {incident.escalation ? (
-        <div className="rec">
-          <div className="rec-top"><span className="rec-p">HANDED OVER</span><Tag tone="warn">{incident.escalation.reason_code}</Tag></div>
-          <p>{incident.escalation.reason}</p>
-          <p style={{ color: 'var(--text-3)' }}>{incident.escalation.recommended_human_action}</p>
-        </div>
-      ) : null}
-    </Card>
-  )
-}
-
 /* ============================================================== incidents */
 
 export function Incidents({ incidents, incident, busy, selectedId, onOpen, onApprove, onReject }) {
@@ -471,6 +350,7 @@ function IncidentDetail({ incident, summary, busy, onApprove, onReject }) {
 
       <h4 className="wf-heading">Workflow</h4>
       <Workflow incident={incident} />
+      <ActivityLog incident={incident} />
     </Card>
   )
 }
