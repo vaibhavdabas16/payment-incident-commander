@@ -324,3 +324,32 @@ def test_unauthorised_execution_metric_is_per_record():
 
     incident.audit[0].policy_outcome = PolicyOutcome.DENY.value
     assert Harness()._unauthorised_executions(incident) == 1, "a genuine violation must still count"
+
+
+def test_a_scenario_that_breaks_nothing_is_never_scored_as_a_missed_detection():
+    """Restraint must not be counted as failure.
+
+    `SCN-TRAFFIC-MIX` shifts the traffic composition so the headline success rate falls while
+    every provider keeps working. Nothing is degraded and the correct behaviour is silence - it is
+    the benchmark's restraint test. Scoring its windows as "truly degraded" turned every one of
+    them into a missed detection, a third of all false negatives, while the same run credited
+    `scenarios_detected 24/24` precisely *because* the detector stayed quiet there.
+    """
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from pic.evaluation.harness import Harness
+    from pic.simulation.scenarios import get_scenario
+
+    onset = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    # Far enough in that both scenarios are at full intensity.
+    engine = SimpleNamespace(now=onset + timedelta(seconds=600))
+    harness = Harness()
+
+    control = get_scenario("SCN-TRAFFIC-MIX")
+    assert control.effects == [], "the restraint test must inject no failures"
+    assert harness._scenario_active(engine, control, onset) is False
+
+    # A scenario that does break something must still count, or the fix would hide real misses.
+    real = get_scenario("SCN-UPI-PSP")
+    assert harness._scenario_active(engine, real, onset) is True

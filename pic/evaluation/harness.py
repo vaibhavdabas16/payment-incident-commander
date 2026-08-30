@@ -261,6 +261,18 @@ class Harness:
 
     def _scenario_active(self, engine: Engine, scenario: Scenario, onset: datetime) -> bool:
         """Whether the scenario was materially active during the window just examined."""
+        # A scenario that injects no failure effects degrades nothing. `SCN-TRAFFIC-MIX` shifts the
+        # traffic composition so the headline success rate falls while every provider keeps working
+        # perfectly, and the correct behaviour is silence. Its windows are therefore healthy: an
+        # alarm is a false positive and staying quiet is a true negative.
+        #
+        # Counting them as degraded scored the system's own restraint test as 170 missed
+        # detections - a third of every false negative in the benchmark - while the same run
+        # reported `scenarios_detected 24/24` precisely *because* the detector stayed quiet there.
+        # One behaviour cannot be both the success and the failure, and the version that penalised
+        # it was understating recall by a wide margin.
+        if not scenario.effects:
+            return False
         elapsed = (engine.now - onset).total_seconds()
         # Below half intensity the degradation is genuinely hard to see, and counting those windows
         # as missed detections would penalise the detector for the ramp rather than for its
