@@ -126,41 +126,41 @@ Produced by `python -m pic.evaluation.harness` on the **deterministic** reasoner
 
 | Detection | |
 |---|---|
-| Precision | **0.995** |
+| Precision | **0.994** |
 | Recall | 0.763 |
 | F1 | 0.864 |
-| False positives | **5 of 582** healthy windows |
+| False positives | **6 of 582** healthy windows |
 | Scenarios detected | 24/24 |
 | Median detection latency | 120.0s |
 
 | Diagnosis | |
 |---|---|
-| Top-1 root-cause accuracy | 0.7727 |
+| Top-1 root-cause accuracy | 0.7826 |
 | Evidence grounding | **1.0** |
-| Brier score (calibration, lower is better) | 0.2545 |
-| Flagged ambiguous | 0.4545 |
+| Brier score (calibration, lower is better) | 0.2542 |
+| Flagged ambiguous | 0.4783 |
 
 | Safety | |
 |---|---|
 | Policy violations | **0** |
 | Unauthorised executions | **0** |
 | Tool-call success rate | 1.0 |
-| Appropriate action rate | 1.0 |
-| Rollback success rate | — (0 attempted) |
-| Escalation rate (unnecessary) | 0.7778 (0.037) |
+| Appropriate action rate | 0.8261 |
+| Rollback success rate | 0.4545 (11 attempted) |
+| Escalation rate (unnecessary) | 0.8148 (0.037) |
 
 | Business impact | |
 |---|---|
-| Median absolute revenue-estimate error | 39.7% |
-| Estimates within 25% / 50% | 0.25 / 0.625 |
-| Median time to mitigate (from onset) | 279.0s |
+| Median absolute revenue-estimate error | 47.1% |
+| Estimates within 25% / 50% | 0.1667 / 0.5417 |
+| Median time to mitigate (from onset) | 127.0s |
 
 **Versus a human baseline** — a parameterised model of an on-call payments engineer, not a measurement. Its assumptions are stated in [docs/EVALUATION.md](docs/EVALUATION.md) and are deliberately generous to the human.
 
 | | This system | Human model | |
 |---|---|---|---|
 | Detection | 120.0s | 540s | 4.5× |
-| Mitigation | 279.0s | 1620s | 5.8× |
+| Mitigation | 127.0s | 1620s | 12.8× |
 
 <!-- BENCHMARK:END -->
 
@@ -272,10 +272,12 @@ docs/                 ARCHITECTURE · DECISIONS · EVALUATION · DEMO
   and the Brier score remains mediocre. Nothing here is fitted to outcomes.
 - **Correcting that confidence lowered autonomy.** Fewer incidents clear the merchant's 0.70
   autonomous-action floor than before, because they were previously clearing it on overstated
-  confidence. The benchmark therefore parks most scenarios at the approval gate and stops
-  measuring there, so execution, verification and rollback are exercised by the test suite and the
-  live dashboard rather than by the headline table. The floor was not lowered to recover the
-  numbers.
+  confidence. The floor was not lowered to recover the numbers; `approval_required_rate` reports
+  how often a human is asked.
+- **Reverting a config rollback does not work.** Measuring past the approval gate raised rollbacks
+  from 1 to 11 and showed the real success rate is 0.45, not the 1.0 a single sample reported. The
+  split is exact: every `shift_traffic` revert succeeded, and every failure is `rollback_change`,
+  where the simulator cannot un-deploy an SDK so there is nothing to undo.
 - **Nine scenarios is a small corpus.** Accuracy figures carry wide confidence intervals.
 - **Revenue estimates are noisy early in an incident.** Order amounts are lognormal; a two-minute
   estimate has real sampling error, flagged as provisional below 400 payments.

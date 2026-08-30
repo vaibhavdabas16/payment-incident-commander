@@ -150,12 +150,19 @@ mean confidence when wrong, and the Brier score improved, but the margin is smal
 still mediocre. A calibrator fitted over more scenarios would do better; at this corpus size it
 would mostly encode the simulator's quirks.
 
-**The benchmark stops measuring at the approval gate.** Most scenarios end in
-`AWAITING_HUMAN_APPROVAL`, which is scored as the agent stopping safely - correct, but it means
-execution, verification and rollback go unmeasured for those runs, and `rollback_success_rate` can
-report nothing at all. Those paths are covered by the end-to-end tests, which approve and then
-assert the revert, and by the live dashboard. Measuring past the gate would need the harness to
-model an approving operator.
+**Reverting a config rollback does not work, and that is a simulator limit rather than an agent
+defect.** The harness now models an operator granting the approval the gateway asks for, so runs
+continue past the gate instead of stopping there. That raised verification coverage from 3 runs to
+18 and rollbacks from 1 to 11 - and the honest rollback success rate is 0.45, not the 1.0 that a
+single sample used to report.
+
+The split is exact. All five reverts of a `shift_traffic` or `create_incident_ticket` succeeded.
+All six failures are `rollback_change`: the simulator has no notion of un-deploying an SDK, so the
+action records intent and is flagged `partial_effect`, and there is nothing for the revert to
+undo. No traffic-shift revert has ever failed.
+
+`approval_required_rate` is reported alongside, because needing a human before acting is a safety
+result in its own right and continuing past the gate must not hide it.
 
 **Revenue estimates are noisy on short windows.** Order amounts are lognormal with a long tail, so a
 two-minute estimate carries real sampling error. The Impact Agent measures from incident onset and
