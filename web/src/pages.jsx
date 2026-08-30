@@ -20,78 +20,68 @@ export function CommandCenter({
   const live = incidents?.find((i) => i.state !== 'CLOSED') || null
   const recent = live || incidents?.[0] || null
   const down = (metrics?.deviation ?? 0) < -0.005
+  const awaiting = incident?.state === 'AWAITING_HUMAN_APPROVAL'
+  const rc = incident?.root_cause
 
+  /* One object on the page. Idle it answers "is anything wrong"; during an incident it becomes
+     the incident. Everything else has its own page in the sidebar — putting it here as well only
+     competed with whichever of the two mattered. */
   return (
     <>
-      <div className="page-head">
-        <div>
-          <h1>Command Center</h1>
-          <p>Real-time monitoring and multi-agent incident response.</p>
-        </div>
-        <span className="pill">
-          <Led tone={live ? 'crit' : 'ok'} live />
-          {live ? 'Active incident' : 'All systems operational'}
-        </span>
-      </div>
-
       {error ? <ErrorBox>{error}</ErrorBox> : null}
 
-      {/* Four numbers, not five. Latency and volume belong on Payment Health, where they can be
-          read against their own history rather than competing here. */}
-      <div className="metrics">
-        <Metric
-          label="Success rate"
-          value={metrics ? formatPct(metrics.success_rate) : '—'}
-          delta={metrics ? `${formatPct(Math.abs(metrics.deviation), 1)} vs ${formatPct(metrics.baseline_success_rate)} baseline` : null}
-          deltaTone={down ? 'down' : 'up'}
-          spark={series}
-          sparkTone={down ? 'crit' : 'ok'}
-        />
-        <Metric label="Revenue at risk" value={metrics ? formatINR(metrics.revenue_at_risk_per_hour_paise) : '—'} delta="per hour, open incidents" />
-        <Metric label="Revenue protected" value={metrics ? formatINR(metrics.revenue_protected_per_hour_paise) : '—'} delta="per hour, verified" />
-        <Metric label="Incidents" value={metrics?.active_incidents ?? '—'} delta={metrics ? `${metrics.resolved_incidents} resolved · ${metrics.escalated_incidents} escalated` : null} />
-      </div>
+      <section className={`focus ${live ? 'alert' : ''}`}>
+        <header className="focus-head">
+          <span className="focus-status">
+            <Led tone={live ? 'crit' : 'ok'} live />
+            {live ? (recent.severity === 'CRITICAL' ? 'Critical incident' : 'Incident open')
+                  : recent ? 'Resolved · monitoring' : 'All systems operational'}
+          </span>
+          {recent ? <span className="pill mono">{recent.incident_id}</span> : null}
+          <span className="focus-spacer" />
+          <span className="focus-time mono">{metrics ? formatPct(metrics.success_rate) : '—'} success</span>
+        </header>
 
-      {/* One focus. Either the incident, or a single calm line saying there is not one. */}
-      {recent ? (
-        <IncidentBanner
-          incident={incident} summary={recent} resolved={!live} busy={busy}
-          onOpen={onOpen} onApprove={onApprove} onReject={onReject} onGoto={onGoto}
-        />
-      ) : (
-        <div className="calm">
-          <span className="calm-mark">✓</span>
-          <div className="calm-text">
-            <b>No active incidents</b>
-            <span>Agents are monitoring transaction patterns, provider health and issuer behaviour.</span>
-          </div>
-          <span className="calm-live"><Led tone="agent" live />monitoring</span>
-        </div>
-      )}
+        <div className="focus-body">
+          {recent ? (
+            <div className="focus-inc">
+              <h2>{recent.title}</h2>
+              <p>{rc ? `${rc.most_likely_root_cause}. ${confidenceInWords(rc.confidence)}.` : 'Agents are investigating…'}</p>
 
-      {/* Component health as a dense strip rather than two panels of bars. The detail lives on
-          Payment Health; here it only has to answer "where is the problem". */}
-      <Card title="Component health" sub={`${health?.window_minutes ?? 5} min window`} right={<button className="btn sm" onClick={() => onGoto('health')}>Details</button>}>
-        <HealthChips groups={[['Methods', health?.payment_method], ['Providers', health?.psp]]} />
-      </Card>
+              <div className="focus-facts">
+                {impactFacts(incident).map(([k, v]) => (
+                  <div key={k}><span>{k}</span><b>{v}</b></div>
+                ))}
+              </div>
 
-      <div className="grid-73">
-        <Card title="Payment success rate" sub={metrics ? `${metrics.transactions} payments` : ''}>
-          <SuccessRateChart points={series} baseline={metrics?.baseline_success_rate} />
-        </Card>
-        <Card title="AI Incident Commander" right={<span className="sub">{live ? 'investigating' : 'idle'}</span>} flush>
-          {incident ? (
-            <AgentTrace incident={incident} agents={agents} />
+              <div className="focus-actions">
+                {awaiting ? (
+                  <>
+                    <button className="btn primary" disabled={busy} onClick={onApprove}>Approve and execute</button>
+                    <button className="btn danger" disabled={busy} onClick={onReject}>Reject</button>
+                  </>
+                ) : null}
+                <button className="btn" onClick={() => onGoto('investigation')}>View investigation</button>
+              </div>
+            </div>
           ) : (
-            <div className="card-body">
-              <p style={{ fontSize: 13, color: 'var(--text-2)' }}>
-                Eight agents, one responsibility each. The trace appears here the moment an
-                incident opens.
-              </p>
+            <div className="focus-idle">
+              <SuccessRateChart points={series} baseline={metrics?.baseline_success_rate} height={168} />
             </div>
           )}
-        </Card>
-      </div>
+
+          {incident ? (
+            <aside className="focus-trace">
+              <AgentTrace incident={incident} agents={agents} />
+            </aside>
+          ) : null}
+        </div>
+
+        <footer className="focus-foot">
+          <HealthChips groups={[['', health?.payment_method], ['', health?.psp]]} />
+          <button className="btn sm" onClick={() => onGoto('health')}>Health</button>
+        </footer>
+      </section>
     </>
   )
 }

@@ -17,9 +17,17 @@ const NAV = [
 
 const PAGE_KEYS = [...NAV.map(([k]) => k), 'agents']
 
+const ROUTE = '#/app/'
+
 function readPage() {
-  const hash = typeof window !== 'undefined' ? window.location.hash.replace('#', '') : ''
-  return PAGE_KEYS.includes(hash) ? hash : 'command'
+  if (typeof window === 'undefined') return 'command'
+  const hash = window.location.hash
+  const key = hash.startsWith(ROUTE) ? hash.slice(ROUTE.length) : ''
+  return PAGE_KEYS.includes(key) ? key : 'command'
+}
+
+function readEntered() {
+  return typeof window !== 'undefined' && window.location.hash.startsWith(ROUTE)
 }
 
 export default function App() {
@@ -40,9 +48,7 @@ export default function App() {
   const [page, setPage] = useState(readPage)
   const [collapsed, setCollapsed] = useState(false)
   // The landing page is the front door; a deep link to any page skips it.
-  const [entered, setEntered] = useState(
-    () => typeof window !== 'undefined' && PAGE_KEYS.includes(window.location.hash.replace('#', '')),
-  )
+  const [entered, setEntered] = useState(readEntered)
   const pinned = useRef(false)
 
   /* ---------------------------------------------------------- live stream */
@@ -103,11 +109,13 @@ export default function App() {
   }, [selectedId])
 
   useEffect(() => {
-    if (!entered) return
-    if (readPage() !== page) window.location.hash = page
-    const onHash = () => setPage(readPage())
+    const onHash = () => { setEntered(readEntered()); setPage(readPage()) }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  useEffect(() => {
+    if (entered && window.location.hash !== ROUTE + page) window.location.hash = ROUTE + page
   }, [page, entered])
 
   /* -------------------------------------------------------------- actions */
@@ -140,7 +148,7 @@ export default function App() {
       <Landing
         report={evaluation}
         metrics={metrics}
-        onLaunch={() => { setEntered(true); setPage('command'); window.scrollTo({ top: 0 }) }}
+        onLaunch={() => { window.location.hash = ROUTE + 'command'; setEntered(true); setPage('command'); window.scrollTo({ top: 0 }) }}
       />
     )
   }
@@ -151,13 +159,17 @@ export default function App() {
   return (
     <div className={`shell ${collapsed ? 'collapsed' : ''}`}>
       <nav className="side" aria-label="Sections">
-        <div className="side-top">
+        <button
+          className="side-top"
+          title="Back to the overview"
+          onClick={() => { history.replaceState(null, '', window.location.pathname); setEntered(false) }}
+        >
           <span className="mark" aria-hidden="true" />
           <span className="side-name">
             <b>Incident Commander</b>
             <span>AI payment operations</span>
           </span>
-        </div>
+        </button>
 
         <div className="nav-group">
           <div className="nav-label">Operations</div>
