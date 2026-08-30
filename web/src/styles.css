@@ -576,12 +576,14 @@ body {
 .empty.onboarding .hint { color: var(--text-muted); }
 .empty.onboarding em { color: var(--text-secondary); font-style: normal; font-weight: 600; }
 
-/* Scenario cards carry a tag saying what each one proves. */
+/* Scenario cards carry a tag saying what each one proves. The tag sits on its own row rather
+ * than beside the title: card titles vary a lot in length, and an inline badge made the longer
+ * ones wrap around it, leaving those cards taller and ragged against their neighbours. */
 .scenario .s-head {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
 }
 
 /* --------------------------------------------------------- accessibility */
