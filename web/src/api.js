@@ -20,6 +20,13 @@ export const api = {
   scenarios: () => json('/api/scenarios'),
   agents: () => json('/api/agents'),
   health: () => json('/api/health/segments'),
+  simulationOptions: () => json('/api/simulation/options'),
+  customScenario: (body) =>
+    json('/api/scenarios/custom', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
   trigger: (id) => json(`/api/scenarios/${id}/trigger`, { method: 'POST' }),
   approve: (id) => json(`/api/incidents/${id}/approve`, { method: 'POST' }),
   reject: (id) => json(`/api/incidents/${id}/reject`, { method: 'POST' }),

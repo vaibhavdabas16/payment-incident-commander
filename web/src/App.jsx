@@ -3,6 +3,7 @@ import Landing from './Landing.jsx'
 import { api, connectStream, formatClock } from './api.js'
 import { Led } from './components.jsx'
 import { Agents, Benchmark, CommandCenter, Health, Incidents, Investigation } from './pages.jsx'
+import { SimulateMenu } from './Simulate.jsx'
 
 const POLL_MS = 1500
 
@@ -11,7 +12,6 @@ const NAV = [
   ['incidents', 'Live Incidents', 'ico-pulse'],
   ['investigation', 'AI Investigation', 'ico-agent'],
   ['health', 'Payment Health', 'ico-heart'],
-  ['timeline', 'Incident Timeline', 'ico-time'],
   ['analytics', 'Analytics', 'ico-chart'],
 ]
 
@@ -39,6 +39,7 @@ export default function App() {
   const [scenarios, setScenarios] = useState([])
   const [agents, setAgents] = useState([])
   const [health, setHealth] = useState(null)
+  const [simOptions, setSimOptions] = useState(null)
   const [events, setEvents] = useState([])
   const [evaluation, setEvaluation] = useState(null)
   const [status, setStatus] = useState('connecting')
@@ -97,6 +98,7 @@ export default function App() {
     api.scenarios().then((d) => setScenarios(d.scenarios)).catch(() => {})
     api.agents().then((d) => setAgents(d.agents)).catch(() => {})
     api.evaluation().then(setEvaluation).catch(() => setEvaluation(null))
+    api.simulationOptions().then(setSimOptions).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -137,6 +139,11 @@ export default function App() {
     setNotice({ kind: 'reset', text: 'Cleared every running scenario and incident.' })
     await act(() => api.control('reset'))
     setSelectedId(null); setDetail(null); pinned.current = false
+  }
+
+  const runCustom = async (body) => {
+    setNotice({ kind: 'injected', text: 'Injected your incident. Detection needs a few seconds of traffic.' })
+    await act(() => api.customScenario(body))
   }
 
   const open = (id) => { pinned.current = true; setSelectedId(id); setPage('incidents') }
@@ -210,26 +217,15 @@ export default function App() {
               {status === 'connected' ? (metrics?.agent_status || 'AI agents monitoring') : 'Reconnecting…'}
             </span>
 
-            {/* Injecting a scenario is a demo control, not part of the operator's job, so it
-                lives in the chrome rather than taking a panel in the page. */}
-            <details className="menu">
-              <summary className="btn sm">Simulate</summary>
-              <div className="menu-pop">
-                <div className="menu-head">
-                  <b>Inject an incident</b>
-                  <button className="btn sm" disabled={busy || !scenarios.some((s) => s.active)} onClick={reset}>Reset</button>
-                </div>
-                {notice ? <div className={`notice ${notice.kind}`}>{notice.text}</div> : null}
-                <div className="menu-list">
-                  {scenarios.map((s) => (
-                    <button key={s.scenario_id} className={`menu-item ${s.active ? 'on' : ''}`} disabled={busy} title={s.description} onClick={() => inject(s)}>
-                      <span>{s.name}</span>
-                      {s.active ? <Led tone="warn" live /> : null}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </details>
+            <SimulateMenu
+              scenarios={scenarios}
+              options={simOptions}
+              busy={busy}
+              notice={notice}
+              onInject={inject}
+              onCustom={runCustom}
+              onReset={reset}
+            />
           </div>
         </header>
 
@@ -240,7 +236,6 @@ export default function App() {
           {page === 'incidents' ? <Incidents {...shared} onOpen={open} onApprove={approve} onReject={reject} /> : null}
           {page === 'investigation' ? <Investigation incident={detail} agents={agents} busy={busy} onApprove={approve} onReject={reject} /> : null}
           {page === 'health' ? <Health health={health} metrics={metrics} series={series} /> : null}
-          {page === 'timeline' ? <Incidents {...shared} onOpen={open} onApprove={approve} onReject={reject} /> : null}
           {page === 'analytics' ? <Benchmark report={evaluation} /> : null}
           {page === 'agents' ? <Agents agents={agents} /> : null}
         </main>

@@ -850,3 +850,34 @@ details.more[open] > summary { margin-bottom: 10px; }
  * that the accent sits on a light page. */
 .lp-cta { background: var(--info); color: #fff; }
 .lp-cta:hover { background: #4338ca; }
+
+/* ----------------------------------------------------- custom incident form */
+
+.menu-pop { width: 344px; }
+.menu-tabs { display: flex; gap: 2px; }
+.menu-tab { border: none; background: none; padding: 4px 8px; border-radius: var(--r-sm); font-size: 12.5px; color: var(--text-3); cursor: pointer; }
+.menu-tab:hover { color: var(--text); }
+.menu-tab.on { background: var(--surface-3); color: var(--text); font-weight: 550; }
+.menu-note { font-size: 11px; color: var(--text-3); line-height: 1.5; margin-top: 10px; }
+
+.cform { display: flex; flex-direction: column; gap: 12px; }
+.cform label { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; color: var(--text-3); }
+.cform-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.cform select,
+.cform input[type="number"] {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+  padding: 7px 9px;
+  width: 100%;
+}
+
+.cform select:focus-visible,
+.cform input:focus-visible { outline: 2px solid var(--info); outline-offset: 1px; }
+
+.cform input[type="range"] { width: 100%; accent-color: var(--info); }
+.cform .btn { justify-content: center; }

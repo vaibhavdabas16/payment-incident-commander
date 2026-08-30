@@ -21,11 +21,12 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from ..config import settings
 from ..engine import Engine, EngineConfig
 from ..schemas import IncidentState
-from ..simulation.scenarios import SCENARIOS
+from ..simulation.scenarios import SCENARIOS, Effect, Scenario
 
 WEB_DIST = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
 
@@ -306,6 +307,121 @@ def agents() -> dict[str, Any]:
             for a in ordered
         ]
     }
+
+
+# What a custom incident may be built from: the dimensions the simulator actually generates, and
+# the failure codes the agents know how to reason about. Anything outside this is rejected rather
+# than quietly ignored, so a request cannot ask for a degradation the simulator will not produce.
+def _simulation_options() -> dict[str, Any]:
+    from ..simulation.generator import (
+        BASELINE_ERRORS, GEO_MIX, ISSUER_MIX, METHOD_MIX, ROUTES,
+    )
+
+    psps = sorted({r["psp"] for r in ROUTES.values()})
+    gateways = sorted({r["gateway"] for r in ROUTES.values()})
+    return {
+        "dimensions": {
+            "payment_method": sorted(METHOD_MIX),
+            "psp": psps,
+            "issuer": sorted(ISSUER_MIX),
+            "geography": sorted(GEO_MIX),
+            "route_id": sorted(ROUTES),
+            "gateway": gateways,
+        },
+        "error_codes": sorted(
+            set(BASELINE_ERRORS)
+            | {
+                "PSP_UNAVAILABLE", "GATEWAY_TIMEOUT", "BANK_UNAVAILABLE", "ISSUER_DECLINE",
+                "RISK_RULE_DECLINE", "CHECKOUT_CALLBACK_TIMEOUT",
+            }
+        ),
+        "limits": {
+            "severity_pct": [5, 90],
+            "duration_minutes": [2, 60],
+        },
+    }
+
+
+@app.get("/api/simulation/options")
+def simulation_options() -> dict[str, Any]:
+    """The segments and failure codes a custom incident can be built from."""
+    return _simulation_options()
+
+
+# The cause each dimension implies, so a custom incident carries a sensible label. It is never
+# scored: the benchmark runs the nine designed scenarios, and a custom one is a live exercise.
+_CAUSE_FOR = {
+    "payment_method": "payment_method_degradation",
+    "psp": "psp_degradation",
+    "issuer": "issuer_degradation",
+    "geography": "issuer_degradation",
+    "route_id": "gateway_degradation",
+    "gateway": "gateway_degradation",
+}
+
+
+class CustomIncident(BaseModel):
+    """A degradation described by an operator rather than chosen from the shipped set."""
+
+    dimension: str
+    value: str
+    severity_pct: float = Field(40, ge=5, le=90)
+    duration_minutes: int = Field(12, ge=2, le=60)
+    error_code: str = "PSP_UNAVAILABLE"
+    payment_method: str | None = None
+
+
+@app.post("/api/scenarios/custom")
+def custom_scenario(body: CustomIncident) -> dict[str, Any]:
+    """Build and run an incident from an operator's own parameters.
+
+    It is injected into the same simulator and handled by the same detector, agents, policy
+    gateway and tools as the shipped scenarios - there is no separate path for it, which is the
+    point: the pipeline either copes with a degradation it was never designed around or it does
+    not, in front of you.
+    """
+    options = _simulation_options()
+    allowed = options["dimensions"]
+    if body.dimension not in allowed:
+        raise HTTPException(status_code=400, detail=f"unknown dimension {body.dimension!r}")
+    if body.value not in allowed[body.dimension]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown {body.dimension} {body.value!r}; expected one of {allowed[body.dimension]}",
+        )
+    if body.error_code not in options["error_codes"]:
+        raise HTTPException(status_code=400, detail=f"unknown error code {body.error_code!r}")
+    if body.payment_method and body.payment_method not in allowed["payment_method"]:
+        raise HTTPException(status_code=400, detail=f"unknown payment method {body.payment_method!r}")
+
+    match: dict[str, Any] = {body.dimension: body.value}
+    # Narrowing by method is what makes a realistic incident: one issuer on cards, not that issuer
+    # everywhere it appears.
+    if body.payment_method and body.dimension != "payment_method":
+        match["payment_method"] = body.payment_method
+
+    where = " · ".join(f"{k}={v}" for k, v in match.items())
+    scenario = Scenario(
+        scenario_id="SCN-CUSTOM",
+        name=f"Custom: {where}",
+        description=(
+            f"Operator-defined degradation: {where} loses {body.severity_pct:.0f}% of its success "
+            f"rate for {body.duration_minutes} minutes, failing with {body.error_code}."
+        ),
+        root_cause_id=_CAUSE_FOR.get(body.dimension, "payment_method_degradation"),
+        start_offset_s=0,
+        duration_s=body.duration_minutes * 60,
+        effects=[
+            Effect(
+                match=match,
+                success_multiplier=max(0.05, 1.0 - body.severity_pct / 100.0),
+                error_code=body.error_code,
+            )
+        ],
+        recommended_action="escalate",
+    )
+    engine.trigger(scenario)
+    return {"triggered": scenario.scenario_id, "name": scenario.name, "description": scenario.description}
 
 
 @app.post("/api/scenarios/{scenario_id}/trigger")
