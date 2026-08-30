@@ -820,3 +820,80 @@ body {
 
 /* A scenario already running is marked, so failures are not stacked unknowingly. */
 .scenario.running { border-color: rgba(250, 178, 25, 0.45); background: rgba(250, 178, 25, 0.06); }
+
+/* --------------------------------------------------- plain-English story */
+
+/* The stage list is the evidence and is written for someone who already knows what a
+ * two-proportion test is. This is the account a person asks for first. */
+.story {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.story h3 {
+  margin: 0 0 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-family: var(--mono);
+}
+
+.story p {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.62;
+  color: var(--text-secondary);
+}
+
+.story p:last-child { margin-bottom: 0; }
+
+.story-q {
+  display: block;
+  color: var(--text-primary);
+  font-weight: 620;
+  margin-bottom: 2px;
+}
+
+/* ------------------------------------------------------- progress strip */
+
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+}
+
+.strip-step { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-muted); }
+.strip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+}
+.strip-step.done .strip-dot { background: var(--status-good); border-color: var(--status-good); }
+.strip-step.done .strip-label { color: var(--text-secondary); }
+.strip-step.active .strip-dot { background: var(--series-1); border-color: var(--series-1); }
+.strip-step.active .strip-label { color: var(--text-primary); font-weight: 600; }
+.strip-step.failed .strip-dot { background: var(--status-critical); border-color: var(--status-critical); }
+.strip-step.blocked .strip-dot { background: var(--status-warning); border-color: var(--status-warning); }
+
+/* ------------------------------------------------- progressive disclosure */
+
+.tech > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  list-style: revert;
+}
+
+.tech > summary:hover { color: var(--text-secondary); }
+.tech[open] > summary { margin-bottom: 10px; }

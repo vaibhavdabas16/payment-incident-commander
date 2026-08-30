@@ -594,6 +594,8 @@ function IncidentPanel({ incident, busy, onApprove, onReject }) {
       <div className="panel-body">
         <IncidentTiming incident={incident} />
         <OutcomeBanner incident={incident} />
+        <StageStrip stages={stages} />
+        <IncidentStory incident={incident} />
         {awaiting ? (
           <div className="approval">
             <h3>⚠ Agent recommends action — human approval required</h3>
@@ -614,20 +616,23 @@ function IncidentPanel({ incident, busy, onApprove, onReject }) {
           </div>
         ) : null}
 
-        {stages.map((stage) => (
-          <div key={stage.key} className={`stage ${stage.status}`}>
-            <div className="stage-dot">{stage.status === 'done' ? '✓' : stage.status === 'failed' ? '✕' : stage.index}</div>
-            <div>
-              <div className="stage-title">
-                {stage.title}
-                {stage.badge ? <span className={`badge ${stage.badgeTone}`}>{stage.badge}</span> : null}
+        <details className="tech">
+          <summary>Show the working — evidence, arithmetic and statistics</summary>
+          {stages.map((stage) => (
+            <div key={stage.key} className={`stage ${stage.status}`}>
+              <div className="stage-dot">{stage.status === 'done' ? '✓' : stage.status === 'failed' ? '✕' : stage.index}</div>
+              <div>
+                <div className="stage-title">
+                  {stage.title}
+                  {stage.badge ? <span className={`badge ${stage.badgeTone}`}>{stage.badge}</span> : null}
+                </div>
+                {stage.detail ? <div className="stage-detail">{stage.detail}</div> : null}
+                {stage.extra}
+                {stage.meta ? <div className="stage-meta">{stage.meta}</div> : null}
               </div>
-              {stage.detail ? <div className="stage-detail">{stage.detail}</div> : null}
-              {stage.extra}
-              {stage.meta ? <div className="stage-meta">{stage.meta}</div> : null}
             </div>
-          </div>
-        ))}
+          ))}
+        </details>
       </div>
     </section>
   )
@@ -692,6 +697,121 @@ function paramText(params) {
   const entries = Object.entries(params || {})
   if (!entries.length) return ''
   return entries.map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`).join(', ')
+}
+
+/** Where the agent has got to, as eight dots rather than eight paragraphs. */
+function StageStrip({ stages }) {
+  return (
+    <ol className="strip" aria-label="Agent progress">
+      {stages.map((stage) => (
+        <li key={stage.key} className={`strip-step ${stage.status}`} title={stage.title}>
+          <span className="strip-dot" />
+          <span className="strip-label">{stage.title}</span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+/** The incident in plain English, built only from what the agents actually recorded.
+ *
+ *  The stage list below is the evidence, and it is written for someone who already knows what a
+ *  two-proportion test is. Anyone meeting the system for the first time needs the account first
+ *  and the arithmetic second, so this says what happened in the order a person would ask.
+ */
+function IncidentStory({ incident }) {
+  const a = incident.anomaly
+  const rc = incident.root_cause
+  const im = incident.impact
+  const p = incident.proposal
+  const pd = incident.policy_decision
+  const v = incident.verification
+  const beats = []
+
+  if (a) {
+    beats.push({
+      q: 'What happened',
+      a: `Payments fell to ${formatPct(a.current_value)}, against a normal rate of
+          ${formatPct(a.baseline)}. Three independent checks agreed before an incident was opened.`,
+    })
+  }
+  if (rc) {
+    beats.push({
+      q: 'What the agents think caused it',
+      a: `${rc.most_likely_root_cause}. ${confidenceInWords(rc.confidence)}${
+        rc.ambiguous ? ', and the evidence does not clearly separate the top two explanations' : ''
+      }.`,
+    })
+  }
+  if (im) {
+    beats.push({
+      q: 'What it was costing',
+      a: `About ${formatINR(im.revenue_at_risk_per_hour_paise)} an hour, from roughly
+          ${im.transactions_at_risk_per_hour.toLocaleString()} extra failed payments affecting
+          ${im.affected_customers_estimate.toLocaleString()} customers an hour.`,
+    })
+  }
+  if (p && pd) {
+    beats.push({
+      q: 'What it proposed, and what the policy allowed',
+      a: `${readableAction(p.action)}${paramText(pd.granted_parameters) ? ` (${paramText(pd.granted_parameters)})` : ''}. ${policyInWords(pd)}`,
+    })
+  }
+  if (v) {
+    beats.push({ q: 'Did it work', a: verificationInWords(v) })
+  } else if (incident.escalation) {
+    beats.push({
+      q: 'How it ended',
+      a: `Handed to a human. ${incident.escalation.reason}`,
+    })
+  }
+  if (!beats.length) return null
+
+  return (
+    <div className="story">
+      <h3>In plain English</h3>
+      {beats.map((b) => (
+        <p key={b.q}>
+          <span className="story-q">{b.q}</span>
+          {b.a}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+function confidenceInWords(confidence) {
+  if (confidence === null || confidence === undefined) return 'Confidence was not recorded'
+  const pct = `${Math.round(confidence * 100)}%`
+  if (confidence >= 0.7) return `It is confident (${pct})`
+  if (confidence >= 0.5) return `It is moderately confident (${pct})`
+  return `It is not confident (${pct}), which is why it leans on a human`
+}
+
+function policyInWords(decision) {
+  if (decision.requires_human) {
+    return `The policy gateway would not let this run unattended, so it asked a person first — ${decision.reason}`
+  }
+  if (!decision.approved) {
+    return `The policy gateway refused it — ${decision.reason}`
+  }
+  if (decision.outcome === 'APPROVE_WITH_CLAMP') {
+    return `The policy gateway allowed it but capped how far it could go — ${decision.reason}`
+  }
+  return `The policy gateway allowed it — ${decision.reason}`
+}
+
+function verificationInWords(v) {
+  const measured = v.control_used
+    ? `Measured against a control group that was deliberately left alone, so the incident's own
+       recovery cannot be mistaken for the fix working.`
+    : `Measured before and after the change.`
+  if (v.status === 'RECOVERED') return `Yes. ${measured} ${v.explanation}`
+  if (v.status === 'PARTIALLY_RECOVERED')
+    return `Partly. ${measured} The incident stays open because payments have not fully returned to normal. ${v.explanation}`
+  if (v.status === 'REGRESSED')
+    return `No — it made things worse, so the change was undone. ${measured} ${v.explanation}`
+  return `No. ${measured} ${v.explanation}`
 }
 
 function buildStages(incident) {
