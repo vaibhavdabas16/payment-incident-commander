@@ -912,3 +912,59 @@ details.more[open] > summary { margin-bottom: 10px; }
 /* The trace scrolls; say what it is and let the reader see there is more. */
 .trace-cap { position: sticky; top: 0; z-index: 1; padding: 10px 16px; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); background: var(--surface); border-bottom: 1px solid var(--line); }
 .focus-trace { max-height: 520px; }
+
+/* ------------------------------------------------------------- workflow */
+
+/* The whole incident, stage by stage. A summary says what was decided; this says how, with the
+ * evidence each stage produced sitting under the claim it supports. */
+.wf-heading { margin: 22px 0 12px; font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); }
+
+.wf { list-style: none; margin: 0; padding: 0; position: relative; }
+.wf::before { content: ""; position: absolute; left: 11px; top: 10px; bottom: 18px; width: 1px; background: var(--line); }
+
+.wf-step { display: grid; grid-template-columns: 24px 1fr; gap: 14px; padding-bottom: 20px; position: relative; }
+.wf-step:last-child { padding-bottom: 0; }
+
+.wf-dot {
+  width: 23px; height: 23px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 11px; font-family: var(--mono);
+  background: var(--surface); border: 1px solid var(--line-strong); color: var(--text-3);
+  position: relative; z-index: 1;
+}
+.wf-step.done .wf-dot { background: var(--ok); border-color: var(--ok); color: #fff; }
+.wf-step.failed .wf-dot { background: var(--crit); border-color: var(--crit); color: #fff; }
+.wf-step.blocked .wf-dot { background: var(--warn); border-color: var(--warn); color: #fff; }
+.wf-step.running .wf-dot { background: var(--agent); border-color: var(--agent); color: #fff; animation: breathe 1.8s ease-in-out infinite; }
+.wf-step.todo { opacity: 0.55; }
+
+.wf-title { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; font-size: 13.5px; font-weight: 600; }
+.wf-when { font-family: var(--mono); font-size: 11px; color: var(--text-3); font-weight: 400; }
+.wf-lead { margin-top: 5px; font-size: 13px; color: var(--text-2); line-height: 1.6; }
+.wf-body { margin-top: 10px; }
+.wf-meta { margin-top: 7px; font-family: var(--mono); font-size: 11px; color: var(--text-3); }
+.wf-note { font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
+
+.wf-list { margin: 0; padding-left: 16px; font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
+.wf-list li { margin-bottom: 5px; }
+.wf-list code { font-family: var(--mono); font-size: 11px; color: var(--info); margin-right: 7px; }
+
+/* --------------------------------------------------------------- banner */
+
+/* State first: running, waiting on you, or finished — and how it finished. */
+.banner { border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--r-sm); padding: 13px 15px; background: var(--surface-2); }
+.banner.ok { border-left-color: var(--ok); background: var(--ok-bg); }
+.banner.warn { border-left-color: var(--warn); background: var(--warn-bg); }
+.banner.crit { border-left-color: var(--crit); background: var(--crit-bg); }
+.banner.info { border-left-color: var(--agent); background: var(--agent-bg); }
+.banner-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.banner-top b { font-size: 13.5px; }
+.banner-when { font-family: var(--mono); font-size: 11.5px; color: var(--text-3); margin-left: auto; }
+.banner-actions { display: flex; gap: 9px; margin-top: 12px; }
+
+/* Incident rows carry their state, so the list says what is happening without opening anything. */
+.inc-row-state { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.inc-row-caret { color: var(--text-3); font-size: 11px; width: 12px; text-align: right; }
+
+.scen-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.linkish { background: none; border: none; color: var(--info); font: inherit; cursor: pointer; padding: 0; }

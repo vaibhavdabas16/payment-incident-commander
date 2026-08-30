@@ -1,10 +1,9 @@
-import { useState } from 'react'
 import SuccessRateChart from './Chart.jsx'
 import { formatINR, formatPct, formatClock, severityClass } from './api.js'
 import {
   AgentTrace, Card, Empty, ErrorBox, Evidence, EventFeed, HealthBars, Hypotheses, Led, Metric,
-  Skeleton, Tag, Timeline, confidenceInWords, impactFacts, paramText, readableAction, severityTone,
-  statusTone,
+  Skeleton, Tag, Timeline, Workflow, confidenceInWords, impactFacts, paramText, readableAction,
+  severityTone, statusTone,
 } from './components.jsx'
 
 /* Pages. Every figure comes from the API; where the system has not produced something yet the
@@ -364,76 +363,115 @@ function Recommendations({ incident, busy, onApprove, onReject }) {
 
 /* ============================================================== incidents */
 
-export function Incidents({ incidents, incident, agents, busy, onOpen, onApprove, onReject }) {
-  const [tab, setTab] = useState('overview')
+export function Incidents({ incidents, incident, busy, selectedId, onOpen, onApprove, onReject }) {
   if (!incidents?.length) {
     return (
       <>
-        <div className="page-head"><div><h1>Live Incidents</h1><p>Every incident the system has opened, with its full evidence trail.</p></div></div>
-        <Card><Empty title="No incidents yet" body="Inject a scenario from the Command Center to see the agents work one end to end." facts={[{ label: 'Detector running', tone: 'ok', live: true }]} /></Card>
+        <div className="page-head"><div><h1>Incidents</h1><p>Every incident the system has opened, with its full workflow.</p></div></div>
+        <Card><Empty title="No incidents yet" body="Run something from Simulate and the agents will work it end to end here." facts={[{ label: 'Detector running', tone: 'ok', live: true }]} /></Card>
       </>
     )
   }
+
+  const open = incidents.find((i) => i.incident_id === selectedId) || null
+  const summary = open || null
+
   return (
     <>
-      <div className="page-head"><div><h1>Live Incidents</h1><p>{incidents.length} recorded · newest first</p></div></div>
+      <div className="page-head">
+        <div><h1>Incidents</h1><p>{incidents.length} recorded · newest first</p></div>
+      </div>
+
+      {/* The list stays compact. One incident is open at a time, because a workflow is long and
+          two of them side by side is unreadable. */}
       <Card flush>
         <div className="inc-list">
           {incidents.map((i) => (
-            <button key={i.incident_id} className={`inc-row ${incident?.incident_id === i.incident_id ? 'on' : ''}`} onClick={() => onOpen(i.incident_id)}>
+            <button
+              key={i.incident_id}
+              className={`inc-row ${i.incident_id === selectedId ? 'on' : ''}`}
+              onClick={() => onOpen(i.incident_id === selectedId ? null : i.incident_id)}
+            >
               <span className="inc-row-id">{i.incident_id}</span>
               <Tag tone={severityTone(i.severity)}>{i.severity}</Tag>
               <span className="inc-row-t">{i.title}</span>
-              <Tag tone={i.awaiting_approval ? 'warn' : i.outcome?.includes('RECOVERED') ? 'ok' : 'mute'}>
-                {i.awaiting_approval ? 'approval' : (i.outcome || i.state).replace(/_/g, ' ').toLowerCase()}
-              </Tag>
+              <span className="inc-row-state">
+                <Led
+                  tone={i.state !== 'CLOSED' ? 'crit' : i.outcome?.includes('RECOVERED') ? 'ok' : 'warn'}
+                  live={i.state !== 'CLOSED'}
+                />
+                {i.state !== 'CLOSED'
+                  ? (i.awaiting_approval ? 'needs approval' : 'in progress')
+                  : (i.outcome || 'closed').replace(/_/g, ' ').toLowerCase()}
+              </span>
+              <span className="inc-row-caret">{i.incident_id === selectedId ? '▾' : '▸'}</span>
             </button>
           ))}
         </div>
       </Card>
 
-      {incident ? (
-        <Card title={`${incident.incident_id} · ${incident.title}`} right={<Tag tone={severityTone(incident.severity)}>{incident.severity}</Tag>}>
-          <div className="tabs">
-            {['overview', 'investigation', 'impact', 'timeline', 'actions'].map((t) => (
-              <button key={t} className={`tab ${tab === t ? 'on' : ''}`} onClick={() => setTab(t)}>
-                {t[0].toUpperCase() + t.slice(1)}
-              </button>
-            ))}
-          </div>
-          <div style={{ paddingTop: 16 }}>
-            {tab === 'overview' ? <Overview incident={incident} /> : null}
-            {tab === 'investigation' ? <><Hypotheses rootCause={incident.root_cause} /><div style={{ height: 14 }} /><Evidence incident={incident} /></> : null}
-            {tab === 'impact' ? (
-              incident.impact ? <ol className="calc">{incident.impact.calculation.map((l, i) => <li key={i}>{l}</li>)}</ol> : <Skeleton rows={3} />
-            ) : null}
-            {tab === 'timeline' ? <Timeline incident={incident} /> : null}
-            {tab === 'actions' ? <Recommendations incident={incident} busy={busy} onApprove={onApprove} onReject={onReject} /> : null}
+      {summary && incident && incident.incident_id === summary.incident_id ? (
+        <IncidentDetail incident={incident} summary={summary} busy={busy} onApprove={onApprove} onReject={onReject} />
+      ) : summary ? (
+        <Card><Skeleton rows={5} /></Card>
+      ) : (
+        <Card>
+          <div className="empty" style={{ padding: '30px 20px' }}>
+            <p>Select an incident above to follow its workflow, stage by stage.</p>
           </div>
         </Card>
-      ) : null}
+      )}
     </>
   )
 }
 
-function Overview({ incident }) {
-  const a = incident.anomaly
-  const rc = incident.root_cause
+function IncidentDetail({ incident, summary, busy, onApprove, onReject }) {
+  const closed = incident.state === 'CLOSED'
+  const awaiting = incident.state === 'AWAITING_HUMAN_APPROVAL'
+  const reverted = (incident.audit || []).some((a) => String(a.approved_by || '').startsWith('policy_engine:rollback'))
   const v = incident.verification
+  const tone = !closed ? (awaiting ? 'warn' : 'info')
+    : reverted ? 'warn'
+    : v?.status === 'RECOVERED' ? 'ok'
+    : incident.escalation ? 'warn' : 'mute'
+  const headline = !closed
+    ? (awaiting ? 'Waiting for your decision' : 'Agents are working this incident')
+    : reverted ? 'The fix did not work, so the agent undid it'
+    : v?.status === 'RECOVERED' ? 'Recovered, verified against a control group'
+    : v?.status === 'PARTIALLY_RECOVERED' ? 'Partly recovered — not claimed as a success'
+    : incident.escalation ? 'Handed to a human' : 'Closed'
+
   return (
-    <dl className="kv">
-      <dt>Severity</dt><dd>{incident.severity}</dd>
-      <dt>Status</dt><dd>{(incident.outcome || incident.state).replace(/_/g, ' ').toLowerCase()}</dd>
-      <dt>Opened</dt><dd>{formatClock(incident.opened_at)}</dd>
-      {incident.closed_at ? <><dt>Closed</dt><dd>{formatClock(incident.closed_at)}</dd></> : null}
-      {a ? <><dt>Success rate</dt><dd>{formatPct(a.current_value)} vs {formatPct(a.baseline)} baseline</dd></> : null}
-      {a ? <><dt>Detected by</dt><dd>{a.detection_method?.join(' + ')}</dd></> : null}
-      {rc ? <><dt>Root cause</dt><dd>{rc.most_likely_root_cause}</dd></> : null}
-      {rc ? <><dt>Confidence</dt><dd>{formatPct(rc.confidence, 0)}</dd></> : null}
-      {incident.impact ? <><dt>Revenue at risk</dt><dd>{formatINR(incident.impact.revenue_at_risk_per_hour_paise)}/hr</dd></> : null}
-      {v ? <><dt>Verification</dt><dd>{v.status.replace(/_/g, ' ').toLowerCase()}</dd></> : null}
-      {incident.time_to_mitigate_s != null ? <><dt>Time to mitigate</dt><dd>{Math.round(incident.time_to_mitigate_s)}s after detection</dd></> : null}
-    </dl>
+    <Card
+      title={`${incident.incident_id} · ${incident.title}`}
+      right={<Tag tone={severityTone(incident.severity)}>{incident.severity}</Tag>}
+    >
+      {/* State first: whether it is running, waiting on you, or finished — and how it finished. */}
+      <div className={`banner ${tone}`}>
+        <div className="banner-top">
+          <Led tone={tone === 'info' ? 'agent' : tone} live={!closed} />
+          <b>{headline}</b>
+          {closed && incident.time_to_mitigate_s != null ? (
+            <span className="banner-when">acted {Math.round(incident.time_to_mitigate_s)}s after detection</span>
+          ) : null}
+        </div>
+        {awaiting ? (
+          <div className="banner-actions">
+            <button className="btn primary" disabled={busy} onClick={onApprove}>Approve and execute</button>
+            <button className="btn danger" disabled={busy} onClick={onReject}>Reject</button>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="inc-facts" style={{ marginTop: 16, paddingTop: 16 }}>
+        {impactFacts(incident).map(([k, val]) => (
+          <div key={k}><div className="inc-fact-k">{k}</div><div className="inc-fact-v">{val}</div></div>
+        ))}
+      </div>
+
+      <h4 className="wf-heading">Workflow</h4>
+      <Workflow incident={incident} />
+    </Card>
   )
 }
 

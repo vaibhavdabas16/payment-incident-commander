@@ -264,6 +264,168 @@ export function Evidence({ incident }) {
   )
 }
 
+
+/* ---------------------------------------------------------------- workflow */
+
+/** The whole incident, stage by stage, in the order the supervisor ran it.
+ *
+ *  A summary card tells you what was decided; this tells you how. Each stage is either done,
+ *  running, blocked or not reached, and carries the evidence that stage produced — so the claim
+ *  and the working behind it sit together instead of the working living on another page.
+ */
+export function Workflow({ incident }) {
+  if (!incident) return <Skeleton rows={5} />
+  const a = incident.anomaly
+  const e = incident.evidence
+  const im = incident.impact
+  const rc = incident.root_cause
+  const p = incident.proposal
+  const pd = incident.policy_decision
+  const ar = incident.action_result
+  const v = incident.verification
+  const esc = incident.escalation
+  const stepFor = (agent) => (incident.steps || []).find((s) => s.agent === agent)
+
+  const stages = [
+    {
+      key: 'detect',
+      title: 'Detection',
+      done: !!a,
+      lead: a ? `Success rate ${formatPct(a.current_value)} against a baseline of ${formatPct(a.baseline)}.` : null,
+      meta: a ? `z=${a.z_score} · confidence ${a.confidence} · n=${a.sample_size} · ${a.detection_method?.join(' + ')}` : null,
+      tag: a ? { tone: severityTone(a.severity), text: a.severity } : null,
+    },
+    {
+      key: 'investigate',
+      title: 'Investigation',
+      done: !!e,
+      lead: e ? `${e.findings.length} findings from ${e.tools_used.length} read-only tools. Dominant failure code ${e.dominant_error_code || 'n/a'} (${formatPct(e.dominant_error_share, 0)} of failures).` : null,
+      body: e ? (
+        <ul className="wf-list">
+          {e.findings.slice(0, 4).map((f) => (
+            <li key={f.finding_id}><code>{f.finding_id}</code>{f.statement}</li>
+          ))}
+        </ul>
+      ) : null,
+    },
+    {
+      key: 'impact',
+      title: 'Business impact',
+      done: !!im,
+      lead: im ? `${formatINR(im.revenue_at_risk_per_hour_paise)} per hour at risk, from ${im.transactions_at_risk_per_hour.toLocaleString()} extra failures affecting ${im.affected_customers_estimate.toLocaleString()} customers an hour.` : null,
+      body: im ? <ol className="calc">{im.calculation.map((l, i) => <li key={i}>{l}</li>)}</ol> : null,
+    },
+    {
+      key: 'diagnose',
+      title: 'Root cause',
+      done: !!rc,
+      lead: rc ? `${rc.most_likely_root_cause}. ${confidenceInWords(rc.confidence)}${rc.ambiguous ? ', flagged ambiguous' : ''}.` : null,
+      body: rc ? <Hypotheses rootCause={rc} /> : null,
+      meta: rc ? `reasoner ${rc.reasoner}` : null,
+    },
+    {
+      key: 'decide',
+      title: 'Decision',
+      done: !!p,
+      lead: p ? `${readableAction(p.action)} ${paramText(p.parameters)}` : null,
+      body: p ? <p className="wf-note">{p.rationale}</p> : null,
+      meta: p ? `expected value ${formatINR(p.expected_value_paise)} · protects ${formatINR(p.expected_revenue_protected_per_hour_paise)}/hr · risk ${p.risk_score}` : null,
+    },
+    {
+      key: 'policy',
+      title: 'Policy gate',
+      done: !!pd,
+      blocked: pd ? pd.requires_human : false,
+      failed: pd ? !pd.approved && !pd.requires_human : false,
+      lead: pd ? pd.reason : null,
+      meta: pd?.bound_by?.length ? `bound by ${pd.bound_by.join(', ')}` : null,
+      tag: pd ? { tone: pd.approved ? 'ok' : pd.requires_human ? 'warn' : 'crit', text: pd.outcome.replace(/_/g, ' ').toLowerCase() } : null,
+    },
+    {
+      key: 'execute',
+      title: 'Execution',
+      done: !!ar,
+      failed: ar ? !ar.success : false,
+      lead: ar ? `${readableAction(ar.action)} ${paramText(ar.parameters)}` : null,
+      meta: ar ? `adapter ${ar.adapter}${ar.inverse_action ? ' · reversible' : ''}` : null,
+    },
+    {
+      key: 'verify',
+      title: 'Verification',
+      done: !!v,
+      failed: v ? !['RECOVERED', 'PARTIALLY_RECOVERED'].includes(v.status) : false,
+      lead: v ? v.explanation : null,
+      meta: v ? (v.control_used
+        ? `treated ${formatPct(v.treated_success_rate)} vs control ${formatPct(v.control_success_rate)} · p=${v.p_value} · n=${v.treated_sample}/${v.control_sample}`
+        : `${formatPct(v.before_success_rate)} → ${formatPct(v.after_success_rate)} · p=${v.p_value}`) : null,
+      tag: v ? { tone: ['RECOVERED', 'PARTIALLY_RECOVERED'].includes(v.status) ? 'ok' : 'crit', text: v.status.replace(/_/g, ' ').toLowerCase() } : null,
+    },
+  ]
+
+  if (esc) {
+    stages.push({
+      key: 'escalate',
+      title: 'Handed to a human',
+      done: true,
+      blocked: true,
+      lead: esc.reason,
+      meta: `${esc.reason_code} · ${esc.recommended_human_action}`,
+      tag: { tone: 'warn', text: esc.urgency },
+    })
+  }
+
+  // The last stage is always the outcome, so the workflow ends by saying how it ended rather
+  // than trailing off after whatever the final agent happened to be.
+  const closed = incident.state === 'CLOSED'
+  const reverted = (incident.audit || []).some((x) => String(x.approved_by || '').startsWith('policy_engine:rollback'))
+  stages.push({
+    key: 'outcome',
+    title: 'Outcome',
+    done: closed,
+    blocked: closed && (reverted || !!esc),
+    lead: closed
+      ? (reverted ? 'The fix did not help, so the agent reverted its own change and handed over.'
+        : v?.status === 'RECOVERED' ? 'Payments recovered, verified against a concurrent control group.'
+        : v?.status === 'PARTIALLY_RECOVERED' ? 'Partly recovered — not claimed as a success, and the incident stayed open.'
+        : esc ? 'Handed to a human with the evidence attached.'
+        : 'Closed.')
+      : incident.state === 'AWAITING_HUMAN_APPROVAL'
+        ? 'Waiting for a human to approve or reject the proposed action.'
+        : 'Still in progress.',
+    tag: closed ? { tone: reverted ? 'warn' : v?.status === 'RECOVERED' ? 'ok' : esc ? 'warn' : 'mute', text: (incident.outcome || 'closed').replace(/_/g, ' ').toLowerCase() } : null,
+  })
+
+  // The stage after the last completed one is what is happening now.
+  const firstPending = stages.findIndex((s) => !s.done)
+  if (firstPending >= 0 && incident.state !== 'CLOSED') stages[firstPending].running = true
+
+  return (
+    <ol className="wf">
+      {stages.map((s, i) => {
+        const state = s.failed ? 'failed' : s.blocked && s.done ? 'blocked' : s.done ? 'done' : s.running ? 'running' : 'todo'
+        const step = stepFor(({ detect: 'detection', investigate: 'investigation', impact: 'impact', diagnose: 'root_cause', decide: 'decision', execute: 'action', verify: 'verification', escalate: 'escalation' })[s.key])
+        return (
+          <li className={`wf-step ${state}`} key={s.key}>
+            <span className="wf-dot">{state === 'done' ? '✓' : state === 'failed' ? '✕' : state === 'blocked' ? '!' : i + 1}</span>
+            <div className="wf-main">
+              <div className="wf-title">
+                {s.title}
+                {s.tag ? <Tag tone={s.tag.tone}>{s.tag.text}</Tag> : null}
+                {state === 'running' ? <Tag tone="agent">working</Tag> : null}
+                {state === 'todo' ? <Tag tone="mute">not reached</Tag> : null}
+                {step ? <span className="wf-when">{formatClock(step.started_at)}</span> : null}
+              </div>
+              {s.lead ? <div className="wf-lead">{s.lead}</div> : null}
+              {s.body ? <div className="wf-body">{s.body}</div> : null}
+              {s.meta ? <div className="wf-meta">{s.meta}</div> : null}
+            </div>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
 /* --------------------------------------------------------------- feed */
 
 export function EventFeed({ events }) {

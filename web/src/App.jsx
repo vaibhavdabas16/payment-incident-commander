@@ -3,13 +3,14 @@ import Landing from './Landing.jsx'
 import { api, connectStream, formatClock } from './api.js'
 import { Led } from './components.jsx'
 import { Agents, Benchmark, CommandCenter, Health, Incidents, Investigation } from './pages.jsx'
-import { SimulateMenu } from './Simulate.jsx'
+import Simulate from './Simulate.jsx'
 
 const POLL_MS = 1500
 
 const NAV = [
   ['command', 'Command Center', 'ico-grid'],
-  ['incidents', 'Live Incidents', 'ico-pulse'],
+  ['incidents', 'Incidents', 'ico-pulse'],
+  ['simulate', 'Simulate', 'ico-time'],
   ['investigation', 'AI Investigation', 'ico-agent'],
   ['health', 'Payment Health', 'ico-heart'],
   ['analytics', 'Analytics', 'ico-chart'],
@@ -147,6 +148,8 @@ export default function App() {
   }
 
   const open = (id) => { pinned.current = true; setSelectedId(id); setPage('incidents') }
+  // In the list, clicking the open row collapses it again.
+  const openInList = (id) => { pinned.current = true; setSelectedId(id); if (!id) setDetail(null) }
   const approve = () => detail && act(() => api.approve(detail.incident_id))
   const reject = () => detail && act(() => api.reject(detail.incident_id))
 
@@ -217,15 +220,6 @@ export default function App() {
               {status === 'connected' ? (metrics?.agent_status || 'AI agents monitoring') : 'Reconnecting…'}
             </span>
 
-            <SimulateMenu
-              scenarios={scenarios}
-              options={simOptions}
-              busy={busy}
-              notice={notice}
-              onInject={inject}
-              onCustom={runCustom}
-              onReset={reset}
-            />
           </div>
         </header>
 
@@ -238,9 +232,17 @@ export default function App() {
               onOpen={open} onApprove={approve} onReject={reject} onGoto={setPage}
             />
           ) : null}
-          {page === 'incidents' ? <Incidents {...shared} onOpen={open} onApprove={approve} onReject={reject} /> : null}
+          {page === 'incidents' ? (
+            <Incidents {...shared} selectedId={selectedId} onOpen={openInList} onApprove={approve} onReject={reject} />
+          ) : null}
           {page === 'investigation' ? <Investigation incident={detail} agents={agents} busy={busy} onApprove={approve} onReject={reject} /> : null}
           {page === 'health' ? <Health health={health} metrics={metrics} series={series} /> : null}
+          {page === 'simulate' ? (
+            <Simulate
+              scenarios={scenarios} options={simOptions} busy={busy} notice={notice}
+              onInject={inject} onCustom={runCustom} onReset={reset} onGoto={setPage}
+            />
+          ) : null}
           {page === 'analytics' ? <Benchmark report={evaluation} /> : null}
           {page === 'agents' ? <Agents agents={agents} /> : null}
         </main>
