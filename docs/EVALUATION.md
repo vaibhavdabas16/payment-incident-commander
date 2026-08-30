@@ -188,6 +188,20 @@ was verified byte-identical across separate processes under different `PYTHONHAS
 hash ordering does not affect results either. One historical run reported a false-positive count of
 6 where every run before and since reports 5; that has not been explained.
 
+**Incident memory is live in the app but unmeasured by this benchmark.** The Root Cause Agent can
+take small prior nudges from resolved incidents that resemble the current one. The mechanism works
+- a query matches a stored incident at similarity 1.0 and the prior is returned - and in the
+deployed service, where a single long-lived engine handles every incident, memory accumulates
+naturally.
+
+The harness never exercises it. It builds a fresh Engine per scenario, so memory starts empty
+every run; and `record()` fires only when an incident closes, while most park at the approval
+gate. Sharing one memory across every run changed nothing, because with 22 scored runs and few
+closures almost no run ever had a prior to draw on. So the honest position is not that memory
+helps or that it does not: at this corpus size the effect is not measurable either way, and no
+published number depends on it. Measuring it properly needs a larger corpus and a harness that
+carries memory across runs deliberately.
+
 **Nine scenarios is a small corpus.** The accuracy figures have wide confidence intervals. Three
 seeds reduce variance from traffic sampling but not from scenario design.
 
