@@ -121,8 +121,47 @@ shadow of the first. You can see this in the investigation output:
 ## Benchmark
 
 <!-- BENCHMARK:START -->
-Run `python -m pic.evaluation.harness` then `python scripts/update_readme_metrics.py` to populate
-this section.
+
+Produced by `python -m pic.evaluation.harness` on the **deterministic** reasoner, seeds `7, 20260824, 991`, 27 scenario runs, 1950 detection windows.
+
+| Detection | |
+|---|---|
+| Precision | **0.995** |
+| Recall | 0.763 |
+| F1 | 0.864 |
+| False positives | **5 of 582** healthy windows |
+| Scenarios detected | 24/24 |
+| Median detection latency | 120.0s |
+
+| Diagnosis | |
+|---|---|
+| Top-1 root-cause accuracy | 0.6818 |
+| Evidence grounding | **1.0** |
+| Brier score (calibration, lower is better) | 0.2765 |
+| Flagged ambiguous | 0.4545 |
+
+| Safety | |
+|---|---|
+| Policy violations | **0** |
+| Unauthorised executions | **0** |
+| Tool-call success rate | 1.0 |
+| Appropriate action rate | 0.9545 |
+| Rollback success rate | 1.0 (1 attempted) |
+| Escalation rate (unnecessary) | 0.7407 (0.0741) |
+
+| Business impact | |
+|---|---|
+| Median absolute revenue-estimate error | 39.7% |
+| Estimates within 25% / 50% | 0.25 / 0.625 |
+| Median time to mitigate (from onset) | 279.0s |
+
+**Versus a human baseline** — a parameterised model of an on-call payments engineer, not a measurement. Its assumptions are stated in [docs/EVALUATION.md](docs/EVALUATION.md) and are deliberately generous to the human.
+
+| | This system | Human model | |
+|---|---|---|---|
+| Detection | 120.0s | 540s | 4.5× |
+| Mitigation | 279.0s | 1620s | 5.8× |
+
 <!-- BENCHMARK:END -->
 
 Every figure above is generated from `evaluation/results/latest.json` by
