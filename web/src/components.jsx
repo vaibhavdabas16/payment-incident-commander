@@ -374,8 +374,10 @@ export function Workflow({ incident }) {
       title: 'Handed to a human',
       done: true,
       blocked: true,
-      lead: esc.reason,
-      meta: `${esc.reason_code} · ${esc.recommended_human_action}`,
+      // The specific case first. The category still shows, as a label rather than an
+      // explanation, because grouping handovers by kind is useful once you know the facts.
+      lead: esc.because || esc.reason,
+      meta: `${esc.reason} · ${esc.recommended_human_action}`,
       tag: { tone: 'warn', text: esc.urgency },
     })
   }

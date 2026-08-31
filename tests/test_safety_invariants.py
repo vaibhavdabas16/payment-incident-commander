@@ -399,3 +399,52 @@ def test_a_hung_agent_is_abandoned_and_escalated_rather_than_stalling():
     # And the incident ends in human hands rather than sitting open.
     assert incident.state is IncidentState.CLOSED
     assert incident.escalation is not None
+    # The handover names the agent that died and says it died, so the operator is not sent to
+    # investigate payment segments over what is actually a broken agent.
+    because = incident.escalation.because
+    assert "root cause agent did not produce a diagnosis" in because, because
+    assert "AgentTimeout" in because, because
+
+
+def test_handover_states_the_case_not_the_category():
+    """Every escalation explains this incident, not the branch it took.
+
+    The reason strings were a fixed table keyed by reason code, so "No available action addresses
+    the diagnosed cause" was returned verbatim for every incident reaching that branch. It names
+    the branch. A human paged at 2am needs the action that was refused, the rule that refused it or
+    the measurement that came back flat - facts the pipeline already recorded and then dropped.
+    """
+    from pic.evaluation.harness import Harness
+
+    seen = []
+
+    class Probe(Harness):
+        def _score(self, engine, scenario, incident, run):
+            if incident.escalation is not None:
+                seen.append(incident.escalation)
+            return super()._score(engine, scenario, incident, run)
+
+    harness = Probe(reasoner="deterministic")
+    # Three scenarios that hand over for three different reasons: policy holds the action, the
+    # only useful action cannot route payments, and the fix actively made things worse.
+    for scenario_id in ("SCN-UPI-PSP", "SCN-ISSUER", "SCN-UPI-PSP-BADFALLBACK"):
+        run = harness.run_scenario(scenario_id, 991)
+        assert run.error is None, run.error
+
+    assert seen, "no incident handed over, so the reason could not be checked"
+    codes = {e.reason_code for e in seen}
+    assert len(codes) > 1, f"expected several handover kinds, got {codes}"
+
+    for esc in seen:
+        assert esc.because, f"{esc.reason_code} handed over with no concrete reason"
+        assert esc.because != esc.reason, "the reason is the category restated"
+        # Concrete means it carries a fact taken from this incident's own record: a measured
+        # number, the action that was proposed, or the diagnosis it names.
+        pack = esc.context_pack
+        proposed = str(pack.get("proposed_action") or "").replace("_", " ")
+        diagnosis = str(pack.get("diagnosis") or "")
+        assert (
+            any(ch.isdigit() for ch in esc.because)
+            or (proposed and proposed in esc.because.lower())
+            or (diagnosis and diagnosis in esc.because)
+        ), esc.because

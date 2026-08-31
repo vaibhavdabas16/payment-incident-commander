@@ -10,6 +10,8 @@ Escalation is never silent: it always notifies, and always leaves a ticket.
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..schemas import (
     AgentResult,
     Escalation,
@@ -18,6 +20,7 @@ from ..schemas import (
     PolicyOutcome,
     ActionType,
     Severity,
+    VerificationStatus,
 )
 from .base import Agent, IncidentContext
 from .impact import format_inr
@@ -52,6 +55,152 @@ RECOMMENDATIONS = {
 }
 
 
+def _pct(value: float | None) -> str:
+    return "unknown" if value is None else f"{value * 100:.1f}%"
+
+
+def _readable(action: ActionType | None) -> str:
+    return action.value.replace("_", " ") if action is not None else "no action"
+
+
+def _failed_step(incident: Any) -> Any:
+    """The step that broke, so a failure can name itself instead of saying 'an agent'."""
+    return next((s for s in reversed(incident.steps or []) if not s.ok), None)
+
+
+def _because(incident: Any, reason_code: str) -> str:
+    """State this incident's case for stopping, in facts the operator can act on.
+
+    Reads only what the pipeline already recorded. Where a fact is missing the sentence gets
+    shorter, never invented - a handover is exactly the moment a fabricated detail does damage.
+    """
+    rc = incident.root_cause
+    ver = incident.verification
+    pol = incident.policy_decision
+    prop = incident.proposal
+    diagnosis = rc.most_likely_root_cause if rc else None
+    acted = _readable(prop.action if prop else None)
+
+    if reason_code == "policy_denied" and pol is not None:
+        return (
+            f"The agent proposed {acted} and merchant policy refused it: {pol.reason}. "
+            f"Nothing was executed."
+        )
+
+    if reason_code == "policy_requires_approval" and pol is not None:
+        return (
+            f"{acted.capitalize()} is ready to run, but {pol.reason}. "
+            f"It executes only if you approve it."
+        )
+
+    if reason_code == "intervention_regressed" and ver is not None:
+        contrast = (
+            f"treated traffic fell to {_pct(ver.treated_success_rate)} while the control group "
+            f"held at {_pct(ver.control_success_rate)}"
+            if ver.control_used
+            else f"success rate fell from {_pct(ver.before_success_rate)} to "
+            f"{_pct(ver.after_success_rate)}"
+        )
+        return (
+            f"{acted.capitalize()} made things worse: {contrast}. The change has been reverted, "
+            f"so payments are back on the configuration you started with."
+        )
+
+    if reason_code in {"intervention_failed", "attempts_exhausted"} and ver is not None:
+        if ver.status is VerificationStatus.INCONCLUSIVE:
+            return (
+                f"{acted.capitalize()} ran, but the result cannot be called: "
+                f"{ver.treated_sample or ver.after_sample} treated payments against "
+                f"{ver.control_sample or ver.before_sample} control (p={ver.p_value:.2f}). "
+                f"Deciding needs more traffic than the incident has produced."
+            )
+        measured = (
+            f"{_pct(ver.treated_success_rate)} on treated traffic against "
+            f"{_pct(ver.control_success_rate)} on a control group left alone"
+            if ver.control_used
+            else f"{_pct(ver.after_success_rate)} after, against "
+            f"{_pct(ver.before_success_rate)} before"
+        )
+        tail = (
+            f"After {incident.attempts} attempts the agent stopped rather than keep changing a "
+            f"live payment system."
+            if reason_code == "attempts_exhausted"
+            else "The change has been reverted."
+        )
+        return (
+            f"{acted.capitalize()} did not help: {measured} (p={ver.p_value:.2f}). {tail} The "
+            f"diagnosis may be wrong, or the fault may sit outside what routing can reach."
+        )
+
+    if reason_code == "intervention_failed":
+        step = _failed_step(incident)
+        detail = (step.error or step.summary) if step else "the tool call did not complete"
+        return f"{acted.capitalize()} was authorised but could not be executed: {detail}."
+
+    if reason_code == "rollback_failed":
+        return (
+            f"{acted.capitalize()} was applied and then could not be undone automatically. "
+            f"Payment routing is still in the changed state, which is why this is urgent: the "
+            f"system is not in a configuration anyone chose."
+        )
+
+    if reason_code == "no_effective_action":
+        if prop is not None and incident.action_result is not None:
+            return (
+                f"The most useful thing available was to {acted}, which does not change how "
+                f"payments route. {diagnosis or 'The fault'} needs a fix this system cannot apply."
+            )
+        if rc is None:
+            step = _failed_step(incident)
+            if step is not None:
+                return (
+                    f"The {step.agent.replace('_', ' ')} agent did not produce a diagnosis: "
+                    f"{step.error or step.summary or 'no detail recorded'}. Acting without one "
+                    f"would mean guessing which segment to change."
+                )
+            return (
+                "No hypothesis scored above zero against the evidence gathered, so acting would "
+                "mean guessing which of several segments to change."
+            )
+        return (
+            f"The diagnosis is {diagnosis} at {_pct(rc.confidence)} confidence, but none of the "
+            f"available tools change it - the failure is not somewhere traffic can be moved "
+            f"away from."
+        )
+
+    if reason_code == "agent_failure":
+        step = _failed_step(incident)
+        if step is not None:
+            return (
+                f"The {step.agent.replace('_', ' ')} agent failed: "
+                f"{step.error or step.summary or 'no detail recorded'}. Every stage after it reads "
+                f"its output, so the workflow stopped rather than act on a partial picture."
+            )
+        return "An agent failed before producing output, so the workflow stopped without acting."
+
+    if reason_code == "ambiguous_diagnosis" and rc is not None and len(rc.hypotheses) >= 2:
+        first, second = rc.hypotheses[0], rc.hypotheses[1]
+        return (
+            f"Two explanations survived the evidence - {first.cause} at "
+            f"{_pct(first.probability)} and {second.cause} at {_pct(second.probability)}. "
+            f"Fixing one would not fix the other, and both may be real."
+        )
+
+    if reason_code == "low_confidence" and rc is not None:
+        return (
+            f"The best explanation is {diagnosis}, but only at {_pct(rc.confidence)} confidence - "
+            f"below the bar for changing a live payment system without a human."
+        )
+
+    if reason_code == "irreversible_action" and prop is not None:
+        return (
+            f"The only action that would help is {acted}, and it cannot be undone automatically. "
+            f"An action the agent cannot reverse is an action a human authorises."
+        )
+
+    return ""
+
+
 class EscalationAgent(Agent):
     name = "escalation"
     state = IncidentState.ESCALATED
@@ -60,6 +209,7 @@ class EscalationAgent(Agent):
         incident = ctx.incident
         reason_code = ctx.scratch.get("escalation_reason", "agent_failure")
         reason = REASONS.get(reason_code, reason_code)
+        because = _because(incident, reason_code)
         recommendation = RECOMMENDATIONS.get(reason_code, "Review the incident manually.")
 
         impact = incident.impact
@@ -94,6 +244,7 @@ class EscalationAgent(Agent):
             incident_id=incident.incident_id,
             reason_code=reason_code,
             reason=reason,
+            because=because,
             urgency=urgency,
             recommended_human_action=recommendation,
             context_pack=context_pack,
@@ -121,7 +272,7 @@ class EscalationAgent(Agent):
         an unresolved incident with nobody watching it.
         """
         body = (
-            f"{escalation.reason}\n\n"
+            f"{escalation.because or escalation.reason}\n\n"
             f"Diagnosis: {escalation.context_pack.get('diagnosis') or 'undetermined'}\n"
             f"Revenue at risk: {format_inr(risk)}/hour\n"
             f"Recommended action: {escalation.recommended_human_action}"

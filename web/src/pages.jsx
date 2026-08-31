@@ -169,7 +169,14 @@ function Result({ incident }) {
       ) : null}
       {v ? <div className="result-line"><span>Measured</span>{v.explanation}</div> : null}
       {incident.escalation ? (
-        <div className="result-line"><span>Handover</span>{incident.escalation.reason}</div>
+        <>
+          <div className="result-line">
+            <span>Handover</span>{incident.escalation.because || incident.escalation.reason}
+          </div>
+          <div className="result-line">
+            <span>Do next</span>{incident.escalation.recommended_human_action}
+          </div>
+        </>
       ) : null}
       {incident.time_to_mitigate_s != null ? (
         <div className="result-line"><span>Acted</span>{Math.round(incident.time_to_mitigate_s)}s after detection</div>

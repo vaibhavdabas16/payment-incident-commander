@@ -1,7 +1,8 @@
 # Payment Incident Commander
 
 **Payments start failing. Eight agents detect it, work out why, price it, ask permission, act — and
-then check whether their own fix actually worked. When it did not, they undo it and hand over.**
+then check whether their own fix actually worked. When it did not, they undo it and hand over — with
+the reason, in the numbers they measured.**
 
 [**Open the live system →**](https://payment-incident-commander.onrender.com)
 &nbsp;·&nbsp; [Architecture](docs/ARCHITECTURE.md)
@@ -30,7 +31,9 @@ isolated world — your incidents are yours alone.
    so nothing runs without a person. Approve it.
 4. **Verification measures the result against a control group** that was deliberately left alone —
    so the incident recovering on its own cannot be mistaken for the fix working.
-5. **It reports that the fix did not help, reverts its own change, and escalates.**
+5. **It reports that the fix did not help, reverts its own change, and hands over.** The handover
+   says what it tried and what it measured — not a category like "no effective action", but the
+   action, the two success rates it compared, and the one thing a human should do next.
 
 That last step is the point of the project. Acting is easy; noticing that the action did not help,
 undoing it, and saying so is the hard part.

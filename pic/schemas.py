@@ -402,7 +402,10 @@ class VerificationResult(BaseModel):
 class Escalation(BaseModel):
     incident_id: str
     reason_code: str
+    # The category, and the case. `reason` groups handovers; `because` is what actually happened
+    # to this incident, in the numbers and names the operator will act on.
     reason: str
+    because: str = ""
     urgency: Severity
     recommended_human_action: str
     context_pack: dict[str, Any] = Field(default_factory=dict)
