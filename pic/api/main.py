@@ -643,3 +643,15 @@ if WEB_DIST.exists():
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(WEB_DIST / "index.html")
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    def favicon() -> FileResponse:
+        """Named explicitly rather than served by a root catch-all.
+
+        A `/{path}` route here would sit in front of every API path added later, and would answer
+        404s with the SPA. One file is served because one file is asked for.
+        """
+        icon = WEB_DIST / "favicon.svg"
+        if not icon.is_file():
+            raise HTTPException(status_code=404, detail="favicon not built")
+        return FileResponse(icon, media_type="image/svg+xml")

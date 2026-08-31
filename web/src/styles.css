@@ -1,9 +1,10 @@
 /* Payment Incident Commander — design system.
  *
- * A dark command centre: near-black ground, elevation carried by a few close surfaces rather than
- * by large colour steps, and colour reserved for meaning. Green, amber, orange and red are the
- * severity ladder the detector actually uses; blue is information; violet is agent reasoning and
- * appears only where an agent is working. Nothing else is coloured.
+ * Warm paper, warm charcoal, one cold blue. The ground is warmer than the cards so a card reads as
+ * an object rather than a box drawn on a field; the accent is the only cold colour on the page, so
+ * it never has to compete to be noticed. Everything else is the severity ladder the detector
+ * actually uses — green, amber, orange, red — plus a single violet shade for agent reasoning,
+ * which appears nowhere except where an agent is working.
  *
  * Type is dense enough for an operator and still readable: one sans for the interface, one
  * monospace for every measured value so digits line up and cannot be mistaken for prose.
@@ -12,44 +13,50 @@
 :root {
   color-scheme: light;
 
-  /* Light ground, white cards. The single biggest reason a dense dashboard reads as calm is that
-   * the page is lighter than the things on it, so a card is an object rather than a box drawn on
-   * a dark field. */
-  --bg: #f7f8fa;
+  /* Warm paper, white cards. The single biggest reason a dense dashboard reads as calm is that the
+   * page is lighter than the things on it — and warmer, so the white has somewhere to sit. */
+  --bg: #f7f6f3;
   --surface: #ffffff;
-  --surface-2: #f4f4f6;
-  --surface-3: #ebedf0;
-  --hover: #e8eaee;
+  --surface-2: #f2f1ec;
+  --surface-3: #e9e7e0;
+  --hover: #edebe4;
 
-  --line: #e4e4e7;
-  --line-strong: #d4d4d8;
+  --line: #e6e3db;
+  --line-strong: #d5d1c6;
 
-  --text: #09090b;
-  --text-2: #52525b;
-  --text-3: #8b909a;
+  --text: #15161a;
+  --text-2: #55585f;
+  --text-3: #8a8d95;
 
-  /* One accent. Everything else is the severity ladder, and violet only where an agent reasons. */
-  --info: #4f46e5;
-  --agent: #7c3aed;
-  --ok: #16a34a;
-  --warn: #d97706;
-  --elevated: #ea580c;
-  --crit: #dc2626;
+  /* One accent: the only cold colour in the system. Violet is a near neighbour of it rather than a
+   * second brand colour, so agent reasoning reads as a shade of the accent, not a rival to it. */
+  --info: #2b53f5;
+  --info-strong: #1e3fd0;
+  --agent: #5b45e0;
+  --ok: #16794a;
+  --warn: #a76a08;
+  --elevated: #c1550f;
+  --crit: #c22a24;
 
-  --ok-bg: #ecfdf3;
-  --warn-bg: #fffaeb;
-  --elevated-bg: #fff4ed;
-  --crit-bg: #fef3f2;
-  --info-bg: #eef2ff;
-  --agent-bg: #f5f3ff;
+  --ok-bg: #edf7f1;
+  --warn-bg: #fbf5e8;
+  --elevated-bg: #fdf2ea;
+  --crit-bg: #fdefed;
+  --info-bg: #eef1fe;
+  --agent-bg: #f2effc;
 
-  /* The sidebar stays dark: it anchors the layout and keeps navigation out of the content. */
-  --side-bg: #101322;
-  --side-text: #e8eaf2;
-  --side-text-2: #969cb3;
-  --side-line: rgba(255, 255, 255, 0.08);
+  /* The sidebar stays dark: it anchors the layout and keeps navigation out of the content. Warm
+   * charcoal rather than navy, so it belongs to the same page as the paper. */
+  --side-bg: #1a1917;
+  --side-text: #f1efea;
+  --side-text-2: #9b9891;
+  --side-line: rgba(255, 255, 255, 0.09);
   --side-hover: rgba(255, 255, 255, 0.06);
-  --side-active: rgba(255, 255, 255, 0.1);
+  --side-active: rgba(255, 255, 255, 0.11);
+
+  /* The mark inverts on the sidebar without a second copy of the artwork. */
+  --mark-line: #ffffff;
+  --mark-dot: var(--info);
 
   --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
@@ -119,22 +126,8 @@ button { font: inherit; }
 
 .side-top { display: flex; align-items: center; gap: 10px; padding: 6px 8px 16px; min-height: 46px; }
 
-.mark {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  background: linear-gradient(145deg, var(--info), var(--agent));
-  flex: none;
-  position: relative;
-}
-
-.mark::after {
-  content: "";
-  position: absolute;
-  inset: 7px;
-  border-radius: 3px;
-  background: var(--surface);
-}
+.mark { flex: none; color: var(--text); }
+.side .mark { color: #ffffff; --mark-line: var(--side-bg); --mark-dot: #6f8dff; }
 
 .side-name { display: flex; flex-direction: column; min-width: 0; }
 .side-name b { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
@@ -312,7 +305,7 @@ button { font: inherit; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn.primary { background: var(--info); border-color: var(--info); color: #05101f; font-weight: 600; }
 .btn.primary:hover:not(:disabled) { background: #5c9bff; border-color: #5c9bff; }
-.btn.danger { background: transparent; border-color: rgba(229, 72, 77, 0.5); color: var(--crit); }
+.btn.danger { background: transparent; border-color: color-mix(in srgb, var(--crit) 50%, transparent); color: var(--crit); }
 .btn.danger:hover:not(:disabled) { background: var(--crit-bg); }
 .btn.sm { padding: 5px 10px; font-size: 12px; }
 
@@ -329,12 +322,12 @@ button { font: inherit; }
   border: 1px solid transparent;
 }
 
-.tag.ok { background: var(--ok-bg); color: var(--ok); border-color: rgba(46, 160, 67, 0.35); }
-.tag.warn { background: var(--warn-bg); color: var(--warn); border-color: rgba(210, 153, 34, 0.35); }
-.tag.elevated { background: var(--elevated-bg); color: var(--elevated); border-color: rgba(232, 131, 58, 0.35); }
-.tag.crit { background: var(--crit-bg); color: var(--crit); border-color: rgba(229, 72, 77, 0.4); }
-.tag.info { background: var(--info-bg); color: var(--info); border-color: rgba(59, 130, 246, 0.35); }
-.tag.agent { background: var(--agent-bg); color: var(--agent); border-color: rgba(139, 92, 246, 0.35); }
+.tag.ok { background: var(--ok-bg); color: var(--ok); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+.tag.warn { background: var(--warn-bg); color: var(--warn); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+.tag.elevated { background: var(--elevated-bg); color: var(--elevated); border-color: color-mix(in srgb, var(--elevated) 35%, transparent); }
+.tag.crit { background: var(--crit-bg); color: var(--crit); border-color: color-mix(in srgb, var(--crit) 40%, transparent); }
+.tag.info { background: var(--info-bg); color: var(--info); border-color: color-mix(in srgb, var(--info) 35%, transparent); }
+.tag.agent { background: var(--agent-bg); color: var(--agent); border-color: color-mix(in srgb, var(--agent) 35%, transparent); }
 .tag.mute { background: var(--surface-3); color: var(--text-2); border-color: var(--line); }
 
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -438,9 +431,9 @@ button { font: inherit; }
 
 /* ------------------------------------------------------------- incident */
 
-.inc-banner { border: 1px solid rgba(229, 72, 77, 0.4); background: linear-gradient(180deg, var(--crit-bg), transparent 70%), var(--surface); border-radius: var(--r); padding: 18px 20px; }
-.inc-banner.ok { border-color: rgba(46, 160, 67, 0.35); background: linear-gradient(180deg, var(--ok-bg), transparent 70%), var(--surface); }
-.inc-banner.warn { border-color: rgba(210, 153, 34, 0.4); background: linear-gradient(180deg, var(--warn-bg), transparent 70%), var(--surface); }
+.inc-banner { border: 1px solid color-mix(in srgb, var(--crit) 40%, transparent); background: linear-gradient(180deg, var(--crit-bg), transparent 70%), var(--surface); border-radius: var(--r); padding: 18px 20px; }
+.inc-banner.ok { border-color: color-mix(in srgb, var(--ok) 35%, transparent); background: linear-gradient(180deg, var(--ok-bg), transparent 70%), var(--surface); }
+.inc-banner.warn { border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: linear-gradient(180deg, var(--warn-bg), transparent 70%), var(--surface); }
 .inc-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
 .inc-title { font-size: 17px; font-weight: 600; letter-spacing: -0.018em; }
 .inc-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
@@ -466,7 +459,7 @@ button { font: inherit; }
 /* --------------------------------------------------------------- states */
 
 .empty { padding: 44px 20px; text-align: center; }
-.empty-mark { width: 40px; height: 40px; border-radius: 12px; background: var(--ok-bg); border: 1px solid rgba(46, 160, 67, 0.3); display: grid; place-items: center; margin: 0 auto 14px; color: var(--ok); font-size: 17px; }
+.empty-mark { width: 40px; height: 40px; border-radius: 12px; background: var(--ok-bg); border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent); display: grid; place-items: center; margin: 0 auto 14px; color: var(--ok); font-size: 17px; }
 .empty h3 { font-size: 15px; margin-bottom: 6px; }
 .empty p { font-size: 13px; color: var(--text-2); max-width: 46ch; margin: 0 auto; line-height: 1.6; }
 .empty-facts { display: flex; gap: 22px; justify-content: center; margin-top: 20px; flex-wrap: wrap; }
@@ -476,7 +469,7 @@ button { font: inherit; }
 @keyframes shimmer { to { background-position: -200% 0; } }
 .skel-line { height: 11px; margin-bottom: 8px; }
 
-.err { border: 1px solid rgba(229, 72, 77, 0.4); background: var(--crit-bg); border-radius: var(--r); padding: 13px 16px; font-size: 13px; }
+.err { border: 1px solid color-mix(in srgb, var(--crit) 40%, transparent); background: var(--crit-bg); border-radius: var(--r); padding: 13px 16px; font-size: 13px; }
 .err b { display: block; margin-bottom: 3px; color: var(--crit); }
 
 /* ----------------------------------------------------------------- feed */
@@ -503,13 +496,13 @@ button { font: inherit; }
 .scen-btn { text-align: left; display: flex; flex-direction: column; gap: 6px; padding: 12px 13px; border-radius: var(--r-sm); border: 1px solid var(--line); background: var(--surface-2); color: inherit; cursor: pointer; transition: border-color 0.14s ease, background 0.14s ease; }
 .scen-btn:hover:not(:disabled) { border-color: var(--line-strong); background: var(--hover); }
 .scen-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.scen-btn.on { border-color: rgba(210, 153, 34, 0.45); background: var(--warn-bg); }
+.scen-btn.on { border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: var(--warn-bg); }
 .scen-name { font-size: 12.5px; font-weight: 550; }
 .scen-desc { font-size: 11.5px; color: var(--text-3); line-height: 1.5; }
 
 .notice { padding: 10px 13px; border-radius: var(--r-sm); font-size: 12.5px; line-height: 1.55; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text-2); margin-bottom: 12px; }
-.notice.injected { border-color: rgba(59, 130, 246, 0.4); background: var(--info-bg); }
-.notice.reset { border-color: rgba(46, 160, 67, 0.35); background: var(--ok-bg); }
+.notice.injected { border-color: color-mix(in srgb, var(--info) 40%, transparent); background: var(--info-bg); }
+.notice.reset { border-color: color-mix(in srgb, var(--ok) 35%, transparent); background: var(--ok-bg); }
 
 /* --------------------------------------------------------------- kv rows */
 
@@ -548,70 +541,125 @@ details.more[open] > summary { margin-bottom: 10px; }
  * benchmark JSON rather than typed.
  * ======================================================================= */
 
-.lp { min-height: 100%; background: radial-gradient(80rem 40rem at 50% -16rem, rgba(59, 130, 246, 0.14), transparent 62%), var(--bg); }
-.lp > * { max-width: 1040px; margin-inline: auto; padding-inline: 28px; }
+.lp {
+  min-height: 100%;
+  /* The hero screenshot runs past the right edge on wide screens. Clipped here rather than
+   * scrolled: a horizontal scrollbar on a landing page is a bug, not a layout. */
+  overflow-x: clip;
+  /* A single warm wash from the top rather than a blue glow: the accent is spent on the things
+   * that matter, not on the background. */
+  background: linear-gradient(180deg, #fffefb 0%, var(--bg) 34%);
+}
+.lp > * { max-width: 1120px; margin-inline: auto; padding-inline: 32px; }
 
 .lp-nav {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 64px;
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  max-width: none;
-  background: color-mix(in srgb, var(--bg) 80%, transparent);
-  backdrop-filter: saturate(180%) blur(16px);
-  -webkit-backdrop-filter: saturate(180%) blur(16px);
-  border-bottom: 1px solid var(--line);
+  gap: 16px;
+  padding-block: 22px;
 }
-
-.lp-brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 14px; }
-.lp-mark { width: 18px; height: 18px; border-radius: 6px; background: linear-gradient(145deg, var(--info), var(--agent)); }
+.lp-brand { display: flex; align-items: center; gap: 11px; font-weight: 600; font-size: 14.5px; letter-spacing: -0.012em; }
 
 .lp-cta {
-  font: inherit; font-weight: 600; font-size: 14px;
-  padding: 12px 24px; border-radius: 8px; border: none;
-  background: var(--info); color: #05101f; cursor: pointer;
-  transition: background 0.14s ease, transform 0.1s ease;
+  border: 1px solid transparent;
+  background: var(--text);
+  color: var(--bg);
+  padding: 12px 20px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
 }
-.lp-cta:hover { background: #5c9bff; }
+.lp-cta:hover { background: #2c2e35; }
 .lp-cta:active { transform: scale(0.985); }
-.lp-cta.sm { padding: 7px 14px; font-size: 13px; }
+.lp-cta.sm { padding: 8px 16px; font-size: 13px; }
 
 .lp-ghost {
-  font-size: 14px; font-weight: 550; color: var(--text-2); text-decoration: none;
-  padding: 12px 20px; border-radius: 8px; border: 1px solid var(--line-strong);
+  display: inline-flex; align-items: center;
+  padding: 12px 20px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: 14px;
 }
-.lp-ghost:hover { color: var(--text); border-color: var(--text-3); }
+.lp-ghost:hover { color: var(--text); border-color: var(--text-3); background: var(--surface); }
 
-.lp-hero { padding-top: 84px; padding-bottom: 76px; text-align: center; }
-.lp-eyebrow { display: inline-block; font-family: var(--mono); font-size: 11px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text-3); margin-bottom: 20px; }
-.lp-hero h1 { font-size: clamp(34px, 5.6vw, 58px); line-height: 1.06; letter-spacing: -0.032em; margin-bottom: 20px; }
-.lp-sub { margin: 0 auto 30px; max-width: 60ch; font-size: 16.5px; line-height: 1.6; color: var(--text-2); }
-.lp-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 56px; }
-
-.lp-proof, .lp-grid, .lp-pipe {
-  display: grid; gap: 1px; margin: 0;
-  background: var(--line); border: 1px solid var(--line);
-  border-radius: var(--r-lg); overflow: hidden;
+/* Hero: copy on the left, the actual product on the right. Below 940px the screenshot moves under
+ * the copy rather than shrinking into illegibility. */
+.lp-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 44px;
+  padding-top: 56px;
+  padding-bottom: 64px;
 }
-.lp-proof { grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); }
-.lp-grid { grid-template-columns: repeat(auto-fit, minmax(176px, 1fr)); }
-.lp-pipe { grid-template-columns: repeat(auto-fit, minmax(224px, 1fr)); list-style: none; padding: 0; }
-
-.lp-proof > div, .lp-grid > div, .lp-pipe li { background: var(--bg); padding: 20px 18px; }
-.lp-proof dt, .lp-grid-k { font-size: 12px; color: var(--text-3); }
-.lp-proof dt { margin-bottom: 7px; }
-.lp-proof dd, .lp-grid-v {
-  margin: 0; display: block; font-family: var(--mono);
-  font-size: 24px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+.lp-eyebrow {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 18px;
 }
-.lp-grid-v { margin-bottom: 7px; }
+.lp-hero h1 {
+  font-size: clamp(31px, 3.7vw, 48px);
+  line-height: 1.05;
+  letter-spacing: -0.034em;
+  text-wrap: balance;
+  margin-bottom: 18px;
+}
+.lp-sub { max-width: 52ch; font-size: 16px; line-height: 1.6; color: var(--text-2); margin-bottom: 28px; }
+.lp-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 
-.lp-section { padding-block: 68px; border-top: 1px solid var(--line); }
-.lp-head { max-width: 58ch; margin-bottom: 34px; }
-.lp-head h2 { font-size: clamp(24px, 3vw, 34px); line-height: 1.16; letter-spacing: -0.026em; margin-bottom: 12px; }
+.lp-shot {
+  margin: 0;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  overflow: hidden;
+  /* Two soft shadows rather than one hard one, so the panel lifts off the paper without a visible
+   * edge of grey underneath it. */
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 6%, transparent),
+    0 24px 48px -24px color-mix(in srgb, var(--text) 22%, transparent);
+}
+.lp-shot img { display: block; width: 100%; height: auto; }
+/* Dense operator UI does not survive being shrunk to a thumbnail. Past the point where the page
+ * stops growing, the screenshot keeps growing, off the edge. */
+@media (min-width: 1180px) { .lp-shot { margin-right: -76px; } }
+
+/* A direct child of .lp, so it inherits the page gutter - which would paint the divider colour
+ * into the margins. It keeps the same content width with the padding removed instead. */
+.lp-proof {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 1px;
+  margin: 0 auto;
+  padding-inline: 0;
+  max-width: 1056px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.lp-proof > div { background: var(--bg); padding: 22px 24px; }
+.lp-proof dt { font-size: 12px; color: var(--text-3); margin-bottom: 7px; }
+.lp-proof dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.lp-section { padding-block: 76px; }
+.lp-section + .lp-section { border-top: 1px solid var(--line); }
+.lp-head { max-width: 56ch; margin-bottom: 36px; }
+.lp-head h2 { font-size: clamp(25px, 3vw, 34px); line-height: 1.14; letter-spacing: -0.028em; margin-bottom: 12px; }
 .lp-head p { font-size: 15.5px; line-height: 1.62; color: var(--text-2); }
 
 .lp-bar { display: grid; grid-template-columns: 150px 1fr 140px; gap: 14px; align-items: center; margin-bottom: 11px; }
@@ -623,12 +671,34 @@ details.more[open] > summary { margin-bottom: 10px; }
 .lp-bar-v { font-family: var(--mono); font-size: 12.5px; color: var(--text-3); text-align: right; }
 .lp-note { margin-top: 16px; font-size: 12px; color: var(--text-3); max-width: 70ch; }
 
+.lp-pipe, .lp-grid {
+  display: grid;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.lp-pipe { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); list-style: none; padding: 0; margin: 0; }
+.lp-grid { grid-template-columns: repeat(auto-fit, minmax(178px, 1fr)); }
+.lp-pipe li, .lp-grid > div { background: var(--surface); padding: 20px 18px; }
+.lp-grid-k { display: block; font-size: 12px; color: var(--text-3); }
+.lp-grid-v {
+  display: block;
+  font-family: var(--mono);
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  margin-bottom: 7px;
+}
+
 .lp-pipe-n { display: block; font-family: var(--mono); font-size: 11px; color: var(--text-3); margin-bottom: 9px; }
 .lp-pipe-name { display: block; font-weight: 600; font-size: 14.5px; margin-bottom: 5px; }
 .lp-pipe-what { display: block; font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
-.lp-pipe li.gate { background: rgba(59, 130, 246, 0.06); }
+/* The two stages the whole safety argument rests on are the only coloured ones. */
+.lp-pipe li.gate { background: var(--info-bg); }
 .lp-pipe li.gate .lp-pipe-name { color: var(--info); }
-.lp-pipe li.writer { background: rgba(232, 131, 58, 0.06); }
+.lp-pipe li.writer { background: var(--elevated-bg); }
 .lp-pipe li.writer .lp-pipe-name { color: var(--elevated); }
 
 .lp-pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
@@ -640,13 +710,33 @@ details.more[open] > summary { margin-bottom: 10px; }
 
 .lp-bench code { font-family: var(--mono); font-size: 13px; color: var(--text); }
 
-.lp-final { padding-block: 88px; text-align: center; border-top: 1px solid var(--line); }
-.lp-final h2 { font-size: clamp(26px, 3.4vw, 38px); letter-spacing: -0.028em; margin-bottom: 12px; }
+.lp-final { padding-block: 92px; text-align: center; border-top: 1px solid var(--line); }
+.lp-final .mark { margin-bottom: 22px; }
+.lp-final h2 { font-size: clamp(26px, 3.4vw, 38px); letter-spacing: -0.03em; margin-bottom: 12px; }
 .lp-final p { margin: 0 auto 26px; max-width: 56ch; font-size: 15.5px; line-height: 1.6; color: var(--text-2); }
-.lp-live { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 20px; font-family: var(--mono); font-size: 11.5px; color: var(--text-3); }
+.lp-live { display: inline-flex; align-items: center; gap: 8px; margin-top: 22px; font-family: var(--mono); font-size: 11.5px; color: var(--text-3); }
 .lp-live i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 
 .lp-foot { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding-block: 26px 40px; border-top: 1px solid var(--line); font-size: 12px; color: var(--text-3); }
+
+@media (max-width: 940px) {
+  .lp-hero { grid-template-columns: 1fr; gap: 36px; padding-top: 36px; }
+  .lp-sub { max-width: none; }
+}
+
+/* On a phone the header is the widest thing on the page: a 24-character product name beside a
+ * button does not fit in 430px, and because the page clips its overflow it failed silently -
+ * everything looked correct except that the right edge of every paragraph was gone. */
+@media (max-width: 560px) {
+  .lp > * { padding-inline: 20px; }
+  .lp-nav { gap: 10px; padding-block: 16px; }
+  .lp-brand { font-size: 13px; gap: 8px; min-width: 0; }
+  .lp-eyebrow { font-size: 10px; }
+  .lp-actions { flex-direction: column; align-items: stretch; }
+  .lp-actions .lp-cta, .lp-actions .lp-ghost { justify-content: center; text-align: center; }
+  .lp-section { padding-block: 52px; }
+  .lp-final { padding-block: 64px; }
+}
 
 @media (max-width: 720px) {
   .lp-bar { grid-template-columns: 1fr; gap: 5px; }
@@ -670,7 +760,7 @@ details.more[open] > summary { margin-bottom: 10px; }
 .calm-mark {
   width: 28px; height: 28px; border-radius: 9px; flex: none;
   display: grid; place-items: center;
-  background: var(--ok-bg); border: 1px solid rgba(46, 160, 67, 0.3); color: var(--ok); font-size: 14px;
+  background: var(--ok-bg); border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent); color: var(--ok); font-size: 14px;
 }
 
 .calm-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -692,9 +782,9 @@ details.more[open] > summary { margin-bottom: 10px; }
   font-size: 12px; text-transform: capitalize;
 }
 .chip b { font-family: var(--mono); font-variant-numeric: tabular-nums; font-weight: 500; color: var(--text-2); }
-.chip.degraded { border-color: rgba(232, 131, 58, 0.4); background: var(--elevated-bg); }
-.chip.critical { border-color: rgba(229, 72, 77, 0.45); background: var(--crit-bg); }
-.chip.watch { border-color: rgba(210, 153, 34, 0.35); background: var(--warn-bg); }
+.chip.degraded { border-color: color-mix(in srgb, var(--elevated) 40%, transparent); background: var(--elevated-bg); }
+.chip.critical { border-color: color-mix(in srgb, var(--crit) 45%, transparent); background: var(--crit-bg); }
+.chip.watch { border-color: color-mix(in srgb, var(--warn) 35%, transparent); background: var(--warn-bg); }
 
 /* ------------------------------------------------------------ simulate menu */
 
@@ -734,7 +824,7 @@ details.more[open] > summary { margin-bottom: 10px; }
  * becomes the incident. Everything else already has a page in the sidebar, and repeating it here
  * only competed with whichever of those two mattered. */
 .focus { border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); overflow: hidden; }
-.focus.alert { border-color: rgba(229, 72, 77, 0.35); }
+.focus.alert { border-color: color-mix(in srgb, var(--crit) 35%, transparent); }
 
 .focus-head { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line); }
 .focus-status { display: inline-flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 550; }

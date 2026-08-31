@@ -3,6 +3,7 @@ import Landing from './Landing.jsx'
 import { api, connectStream, formatClock } from './api.js'
 import { Led } from './components.jsx'
 import { CommandCenter, Health, Incidents, Proof } from './pages.jsx'
+import Mark from './Mark.jsx'
 import Simulate from './Simulate.jsx'
 
 const POLL_MS = 1500
@@ -209,7 +210,7 @@ export default function App() {
           title="Back to the overview"
           onClick={() => { history.replaceState(null, '', window.location.pathname); setEntered(false) }}
         >
-          <span className="mark" aria-hidden="true" />
+          <Mark size={24} />
           <span className="side-name">
             <b>Incident Commander</b>
             <span>AI payment operations</span>

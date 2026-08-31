@@ -1,7 +1,14 @@
 import { formatINR, formatPct } from './api.js'
+import Mark from './Mark.jsx'
+import productShot from './product.png'
 
 /* The product surface. Everything here is real: the numbers come from the benchmark JSON the
- * harness writes, and the pipeline is the eight agents the supervisor actually runs. */
+ * harness writes, and the pipeline is the eight agents the supervisor actually runs.
+ *
+ * Laid out left-aligned against a screenshot of the real thing rather than as a stack of centred
+ * blocks. A centred column of headline-subhead-buttons is the shape of a pitch deck; a product
+ * page should show the product before it argues for it, and the first honest thing this page can
+ * say is "here is what you are about to look at". */
 
 const PIPELINE = [
   ['Detection', 'Three independent tests must agree'],
@@ -49,7 +56,7 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
     <div className="lp">
       <header className="lp-nav">
         <div className="lp-brand">
-          <span className="lp-mark" aria-hidden="true" />
+          <Mark size={22} />
           Payment Incident Commander
         </div>
         <button className="lp-cta sm" onClick={onEnter}>
@@ -58,47 +65,63 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
       </header>
 
       <section className="lp-hero">
-        <span className="lp-eyebrow">Razorpay AI Buildathon · autonomous payment operations</span>
-        <h1>
-          It doesn’t just tell you
-          <br />
-          payments are failing.
-        </h1>
-        <p className="lp-sub">
-          Eight agents detect the degradation, investigate it with read-only tools, price it,
-          diagnose it, ask a deterministic policy gateway for permission, act — and then measure
-          whether their own fix actually worked. When it didn’t, they undo it and hand over.
-        </p>
-        <div className="lp-actions">
-          <button className="lp-cta" onClick={onWatch}>
-            Watch it handle an incident
-          </button>
-          <a className="lp-ghost" href="https://github.com/vaibhavdabas16/payment-incident-commander">
-            Read the code
-          </a>
+        <div className="lp-hero-copy">
+          <span className="lp-eyebrow">Razorpay AI Buildathon · autonomous payment operations</span>
+          {/* No hard break: the column narrows with the viewport, and a break that reads well at
+              one width strands a single word at another. CSS balances the lines instead. */}
+          <h1>It doesn’t just tell you payments are failing.</h1>
+          <p className="lp-sub">
+            Eight agents detect the degradation, investigate it with read-only tools, price it,
+            diagnose it, ask a deterministic policy gateway for permission, act — and then measure
+            whether their own fix actually worked. When it didn’t, they undo it and hand over with
+            a reason.
+          </p>
+          <div className="lp-actions">
+            <button className="lp-cta" onClick={onWatch}>
+              Watch it handle an incident
+            </button>
+            <a className="lp-ghost" href="https://github.com/vaibhavdabas16/payment-incident-commander">
+              Read the code
+            </a>
+          </div>
+          {metrics ? (
+            <span className="lp-live">
+              <i /> live simulation running · {formatPct(metrics.success_rate)} success right now
+            </span>
+          ) : null}
         </div>
 
-        {d ? (
-          <dl className="lp-proof">
-            <div>
-              <dt>Detection precision</dt>
-              <dd>{formatPct(d.precision, 1)}</dd>
-            </div>
-            <div>
-              <dt>Root-cause accuracy</dt>
-              <dd>{formatPct(g.top1_accuracy, 1)}</dd>
-            </div>
-            <div>
-              <dt>Median detection</dt>
-              <dd>{d.median_detection_latency_s}s</dd>
-            </div>
-            <div>
-              <dt>Unauthorised actions</dt>
-              <dd>{report.reliability.unauthorised_executions}</dd>
-            </div>
-          </dl>
-        ) : null}
+        {/* The product, before the argument for it. */}
+        <figure className="lp-shot">
+          <img
+            src={productShot}
+            alt="The incident workflow: detection, investigation, impact, diagnosis, decision, policy gate, action and verification, each with its own result."
+            loading="eager"
+            width="1280"
+          />
+        </figure>
       </section>
+
+      {d ? (
+        <dl className="lp-proof">
+          <div>
+            <dt>Detection precision</dt>
+            <dd>{formatPct(d.precision, 1)}</dd>
+          </div>
+          <div>
+            <dt>Root-cause accuracy</dt>
+            <dd>{formatPct(g.top1_accuracy, 1)}</dd>
+          </div>
+          <div>
+            <dt>Median detection</dt>
+            <dd>{d.median_detection_latency_s}s</dd>
+          </div>
+          <div>
+            <dt>Unauthorised actions</dt>
+            <dd>{report.reliability.unauthorised_executions}</dd>
+          </div>
+        </dl>
+      ) : null}
 
       <section className="lp-section lp-problem">
         <div className="lp-head">
@@ -202,6 +225,7 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
       ) : null}
 
       <section className="lp-final">
+        <Mark size={44} detail />
         <h2>Break something and watch.</h2>
         <p>
           Nine scenarios, including one where the obvious fix cannot possibly work. Nothing is
@@ -211,11 +235,6 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
         <button className="lp-cta" onClick={onWatch}>
           Break something and watch
         </button>
-        {metrics ? (
-          <span className="lp-live">
-            <i /> live simulation running · {formatPct(metrics.success_rate)} success right now
-          </span>
-        ) : null}
       </section>
 
       <footer className="lp-foot">
