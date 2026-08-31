@@ -8,6 +8,16 @@ const SESSION_KEY = 'pic.session'
 
 function sessionId() {
   try {
+    // An explicit ?session= in the page URL wins, so a live world can be shared: send someone the
+    // link and they watch the same incident rather than a fresh, quiet simulation of their own.
+    const shared = new URLSearchParams(window.location.search).get('session')
+    if (shared) {
+      const clean = shared.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64)
+      if (clean) {
+        localStorage.setItem(SESSION_KEY, clean)
+        return clean
+      }
+    }
     let id = localStorage.getItem(SESSION_KEY)
     if (!id) {
       id = (crypto.randomUUID?.() || String(Math.random()).slice(2)).replace(/-/g, '').slice(0, 24)

@@ -1,32 +1,53 @@
 # Payment Incident Commander
 
-**An autonomous AI operations system that detects payment degradation, investigates why it happened,
-estimates revenue at risk, safely takes corrective action, and verifies that payments recovered.**
+**Payments start failing. Eight agents detect it, work out why, price it, ask permission, act — and
+then check whether their own fix actually worked. When it did not, they undo it and hand over.**
 
-It does not just tell a merchant that payments are failing. It investigates, decides, acts within
-the merchant's own policy, and then checks its own work — and when the fix does not help, it says
-so, undoes what it did, and hands over to a human.
+[**Open the live system →**](https://payment-incident-commander.onrender.com)
+&nbsp;·&nbsp; [Architecture](docs/ARCHITECTURE.md)
+&nbsp;·&nbsp; [How it was measured](docs/EVALUATION.md)
+&nbsp;·&nbsp; [Decisions and trade-offs](docs/DECISIONS.md)
 
-```
-OBSERVE → DETECT → INVESTIGATE → HYPOTHESIZE → DECIDE → [POLICY GATE] → ACT → VERIFY → LEARN
-                                                             │
-                                                             └─ or ESCALATE
-```
+![The incident workflow, stage by stage](docs/images/incident-workflow.png)
+
+> Every stage above carries the evidence that produced it: the findings the read-only tools
+> returned, the arithmetic behind the money, the ranked hypotheses, the rule that made the policy
+> gateway stop, and what the verification measured against its control group. Nothing on that
+> screen is written by hand.
 
 ---
 
-**Live:** https://payment-incident-commander.onrender.com — the free tier sleeps after ~15 minutes
-idle, so the first request may take up to a minute to wake it.
+## See it in 90 seconds
 
-## Quick start
+The live link runs a payment simulator with real traffic, and gives every visitor their own
+isolated world — your incidents are yours alone.
+
+1. **Simulate → "UPI rails degraded network-wide"**. Every UPI provider is failing together, so the
+   obvious fix — reroute to a healthier provider — cannot possibly work.
+2. **Watch the Overview.** Detection fires within seconds; the agents investigate, price the damage
+   and diagnose it, pausing between steps so you can follow the work.
+3. **The policy gateway stops and asks you.** Confidence is below the merchant's autonomous floor,
+   so nothing runs without a person. Approve it.
+4. **Verification measures the result against a control group** that was deliberately left alone —
+   so the incident recovering on its own cannot be mistaken for the fix working.
+5. **It reports that the fix did not help, reverts its own change, and escalates.**
+
+That last step is the point of the project. Acting is easy; noticing that the action did not help,
+undoing it, and saying so is the hard part.
+
+> The free tier sleeps after ~15 minutes idle, so the first request may take up to a minute to wake
+> it. Run it on the deterministic reasoner (the default) — it is what the benchmark uses and an
+> incident completes in seconds.
+
+## Run it yourself
 
 ```bash
 pip install -r requirements.txt
 python -m pic.demo            # three live incidents, ~30s, no build step
 ```
 
-That runs against simulated traffic through the same supervisor, agents, tools and policy gateway
-the dashboard and benchmark use. Nothing is scripted.
+That drives the same supervisor, agents, tools and policy gateway the dashboard and benchmark use.
+Nothing is scripted.
 
 <details>
 <summary>Dashboard, benchmark, tests</summary>
@@ -41,6 +62,9 @@ python -m pytest -q
 # Live dashboard at http://127.0.0.1:8000
 cd web && npm install && npm run build && cd ..
 uvicorn pic.api.main:app --port 8000
+
+# Every route renders, with no console errors
+scripts/check_routes.sh http://127.0.0.1:8000
 ```
 
 Optional: `cp .env.example .env` and add a `GEMINI_API_KEY` to have the Root Cause and Decision
@@ -176,6 +200,17 @@ which also lists the known weaknesses rather than hiding them.
 
 ## Architecture
 
+The lifecycle every incident follows. The gate in the middle is the one an agent cannot open for
+itself.
+
+```
+OBSERVE → DETECT → INVESTIGATE → HYPOTHESIZE → DECIDE → [POLICY GATE] → ACT → VERIFY → LEARN
+                                                             │
+                                                             └─ or ESCALATE
+```
+
+![The overview, idle](docs/images/overview.png)
+
 ```
                         ┌───────────────────────────┐
                         │   Incident Supervisor     │  explicit FSM, no autonomous loop
@@ -292,5 +327,9 @@ docs/                 ARCHITECTURE · DECISIONS · EVALUATION · DEMO
 - **`rollback_change` is modelled, not simulated end to end.** The simulator has no notion of
   un-deploying an SDK, so it records intent and notifies the owning team, flagged `partial_effect`
   so verification does not expect a full recovery.
+- **Each visitor gets their own simulation, capped at eight.** Sessions are keyed by an id the
+  browser keeps, idle ones are dropped after fifteen minutes, and beyond the cap the oldest is
+  evicted — so a link that several people open at once cannot exhaust a small container. Appending
+  `?session=<id>` to the URL joins someone else's world deliberately.
 - **This runs against a simulator.** Write tools are an adapter layer with the Razorpay call shape;
   nothing above that layer changes when a real API is substituted.
