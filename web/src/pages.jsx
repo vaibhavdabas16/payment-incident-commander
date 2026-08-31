@@ -12,7 +12,7 @@ const isOpen = (i) => i && i.state !== 'CLOSED'
 /* =========================================================== command centre */
 
 export function CommandCenter({
-  metrics, series, incidents, incident, agents, health, busy, error,
+  metrics, series, incidents, incident, agents, health, busy, error, notice,
   selectedId, onSelect, onOpen, onApprove, onReject, onGoto, onRunHeadline,
 }) {
   const live = incidents?.find((i) => i.state !== 'CLOSED') || null
@@ -97,9 +97,13 @@ export function CommandCenter({
                   </span>
                 </div>
                 <button className="btn primary" disabled={busy} onClick={onRunHeadline}>
-                  Run an incident
+                  {busy ? 'Starting\u2026' : 'Run an incident'}
                 </button>
               </div>
+              {/* The scenario starts instantly; the incident does not, because detection has to
+                  see enough degraded traffic to be sure. Saying so is the difference between a
+                  wait and a broken button. */}
+              {notice ? <div className={`notice ${notice.kind}`}>{notice.text}</div> : null}
               <SuccessRateChart points={series} baseline={metrics?.baseline_success_rate} height={168} />
             </div>
           )}

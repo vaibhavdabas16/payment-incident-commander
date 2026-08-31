@@ -75,6 +75,18 @@ class Hub:
 # fits comfortably in a small container with room for the interpreter and request handling.
 MAX_SESSIONS = 8
 SESSION_TTL_S = 900
+# A world with nobody looking at it stops. The dashboard polls while a tab is open, so any session
+# being watched is touched several times a minute; one that goes quiet for longer than this has
+# been abandoned, and advancing it only steals time from the sessions that are being watched.
+ACTIVE_WINDOW_S = 75.0
+# Detection reads a two-minute window, so sweeping it more often than once a simulated minute
+# cannot see anything that was not there before - and it costs ~1.3s, which is the entire tick
+# budget. Scheduled in simulated seconds so the cadence does not change with the speedup.
+DETECT_EVERY_SIM_S = 60.0
+# How far the world may catch up in a single tick when the loop falls behind. Without a cap, a
+# stall produces one huge step, which costs proportionally more to generate and detect over, which
+# makes the next tick later still.
+MAX_CATCHUP_TICKS = 3.0
 
 
 @dataclass
@@ -87,9 +99,16 @@ class Session:
     running: bool = True
     speedup: float = field(default_factory=lambda: settings.live_speedup)
     last_seen: float = field(default_factory=time.monotonic)
+    # Wall clock of the last advance, and simulated seconds owed to the detector. Both are
+    # bookkeeping for the loop; nothing else reads them.
+    advanced_at: float = field(default_factory=time.monotonic)
+    sim_since_detect: float = 0.0
 
     def touch(self) -> None:
         self.last_seen = time.monotonic()
+
+    def is_watched(self, now: float) -> bool:
+        return now - self.last_seen <= ACTIVE_WINDOW_S
 
 
 _sessions: dict[str, Session] = {}
@@ -130,7 +149,12 @@ def get_session(session_id: str) -> Session:
     with _sessions_lock:
         sess = _sessions.get(session_id)
         if sess is not None:
+            was_idle = not sess.is_watched(time.monotonic())
             sess.touch()
+            if was_idle:
+                # It stopped while nobody was watching. Resume from now rather than replaying the
+                # gap, which the visitor did not see and does not want to wait for.
+                sess.advanced_at = time.monotonic()
             return sess
     built = _build_session(session_id)
     with _sessions_lock:
@@ -152,17 +176,26 @@ def sess() -> Session:
 
 
 async def _simulation_loop() -> None:
-    """Advance every live session and run a detection cycle for each."""
+    """Advance the worlds someone is watching, and detect on simulated time."""
     interval = 1.0
     while True:
         await asyncio.sleep(interval)
-        with _sessions_lock:
-            live = [s for s in _sessions.values() if s.running]
-        for session in live:
+        now = time.monotonic()
+        for session in sessions_to_advance(now):
             try:
-                seconds = interval * float(session.speedup)
+                # Advance by the time that actually passed, so a slow tick catches up instead of
+                # quietly slowing the simulated world down.
+                elapsed = min(now - session.advanced_at, interval * MAX_CATCHUP_TICKS)
+                session.advanced_at = now
+                seconds = elapsed * float(session.speedup)
+                if seconds <= 0:
+                    continue
+                session.sim_since_detect += seconds
+                detect = session.sim_since_detect >= DETECT_EVERY_SIM_S
+                if detect:
+                    session.sim_since_detect = 0.0
                 # Off the event loop so the WebSocket stays responsive.
-                incident = await asyncio.to_thread(_advance_and_detect, session, seconds)
+                incident = await asyncio.to_thread(_advance_and_detect, session, seconds, detect)
                 if incident is not None:
                     await asyncio.to_thread(session.engine.supervisor.run_incident, incident)
             except asyncio.CancelledError:
@@ -171,9 +204,27 @@ async def _simulation_loop() -> None:
                 session.hub.publish("engine_error", {"error": f"{type(exc).__name__}: {exc}"})
 
 
-def _advance_and_detect(session: Session, seconds: float):
+def sessions_to_advance(now: float) -> list[Session]:
+    """The worlds that should move this tick: running, and someone is looking at them.
+
+    Also the expiry sweep. It used to run only when a new session was created, so an abandoned
+    world could keep a detector sweeping forever - and detection is ~1.3s per session per tick
+    against a 1s tick, so a handful of abandoned worlds is enough to stall every live one.
+    """
+    live = []
+    with _sessions_lock:
+        for sid, session in list(_sessions.items()):
+            if sid != "public" and now - session.last_seen > SESSION_TTL_S:
+                del _sessions[sid]
+                continue
+            if session.running and session.is_watched(now):
+                live.append(session)
+    return live
+
+
+def _advance_and_detect(session: Session, seconds: float, detect: bool = True):
     session.engine.advance(seconds)
-    return session.engine.supervisor.observe()
+    return session.engine.supervisor.observe() if detect else None
 
 
 @asynccontextmanager

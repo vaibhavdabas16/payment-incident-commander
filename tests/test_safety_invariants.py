@@ -448,3 +448,43 @@ def test_handover_states_the_case_not_the_category():
             or (proposed and proposed in esc.because.lower())
             or (diagnosis and diagnosis in esc.because)
         ), esc.because
+
+
+def test_only_watched_worlds_advance():
+    """A simulation nobody is watching must not steal time from one that is.
+
+    Clicking "Run an incident" on the deployed site appeared to do nothing: the scenario was
+    injected and no incident ever opened. The trigger was fine - the clock was not. One tick costs
+    about 1.35s, almost all of it detection, against a 1s interval, and the loop paid that for
+    every session in the registry whether or not anyone was there. Expiry only ran when a new
+    session was created, so abandoned worlds accumulated and the simulated world fell about forty
+    times behind real time, which reads to a visitor as a broken button.
+    """
+    import time as _time
+
+    from pic.api import main
+
+    now = _time.monotonic()
+    watched = main.Session(session_id="watched", engine=None, hub=None, last_seen=now)
+    idle = main.Session(
+        session_id="idle", engine=None, hub=None, last_seen=now - main.ACTIVE_WINDOW_S - 5
+    )
+    stopped = main.Session(session_id="stopped", engine=None, hub=None, last_seen=now, running=False)
+    gone = main.Session(
+        session_id="gone", engine=None, hub=None, last_seen=now - main.SESSION_TTL_S - 5
+    )
+
+    saved = dict(main._sessions)
+    main._sessions.clear()
+    main._sessions.update({s.session_id: s for s in (watched, idle, stopped, gone)})
+    try:
+        advancing = main.sessions_to_advance(now)
+        ids = {s.session_id for s in advancing}
+        assert ids == {"watched"}, ids
+        # Abandoned past the TTL is dropped outright; merely quiet is kept, so returning to the
+        # tab resumes the world rather than starting a new one.
+        assert "gone" not in main._sessions
+        assert "idle" in main._sessions
+    finally:
+        main._sessions.clear()
+        main._sessions.update(saved)

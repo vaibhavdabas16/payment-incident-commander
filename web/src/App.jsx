@@ -156,6 +156,20 @@ export default function App() {
     try { await fn(); await refresh() } catch (err) { setError(String(err.message || err)) } finally { setBusy(false) }
   }
 
+  /** Start the scenario the landing page and the idle state both promise.
+   *
+   *  Prefers the fetched scenario for its name in the notice, but the id is a constant and the
+   *  endpoint takes the id, so a missing list is no reason to refuse to act. */
+  const runHeadline = async () => {
+    const known = scenarios.find((x) => x.scenario_id === HEADLINE_SCENARIO)
+    if (known) return inject(known)
+    setNotice({
+      kind: 'injected',
+      text: 'Injected the scenario. Detection needs a few seconds of traffic \u2014 the incident appears once three independent tests agree.',
+    })
+    await act(() => api.trigger(HEADLINE_SCENARIO))
+  }
+
   const inject = async (scenario) => {
     setNotice({
       kind: 'injected',
@@ -188,12 +202,11 @@ export default function App() {
         metrics={metrics}
         onEnter={() => { window.location.hash = ROUTE + 'command'; setEntered(true); setPage('command'); window.scrollTo({ top: 0 }) }}
         onWatch={() => {
-          const s = scenarios.find((x) => x.scenario_id === HEADLINE_SCENARIO)
           window.location.hash = ROUTE + 'command'
           setEntered(true)
           setPage('command')
           window.scrollTo({ top: 0 })
-          if (s) inject(s)
+          runHeadline()
         }}
       />
     )
@@ -255,10 +268,7 @@ export default function App() {
           {page === 'command' ? (
             <CommandCenter
               {...shared}
-              onRunHeadline={() => {
-                const s = scenarios.find((x) => x.scenario_id === HEADLINE_SCENARIO)
-                if (s) inject(s)
-              }}
+              onRunHeadline={runHeadline}
               selectedId={selectedId}
               onSelect={(id) => { pinned.current = true; setSelectedId(id) }}
               onOpen={open} onApprove={approve} onReject={reject} onGoto={setPage}
