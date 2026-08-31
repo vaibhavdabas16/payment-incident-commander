@@ -10,7 +10,7 @@
 set -u
 BASE="${1:-http://127.0.0.1:8000}"
 CHROME="${CHROME:-/c/Program Files/Google/Chrome/Application/chrome.exe}"
-ROUTES=("" "#/app/command" "#/app/incidents" "#/app/simulate" "#/app/health" "#/app/analytics" "#/app/agents")
+ROUTES=("" "#/app/command" "#/app/incidents" "#/app/incidents/INC-0001" "#/app/simulate" "#/app/health" "#/app/proof")
 fail=0
 for route in "${ROUTES[@]}"; do
   out=$("$CHROME" --headless=new --disable-gpu --no-sandbox --enable-logging=stderr --v=0 \

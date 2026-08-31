@@ -40,7 +40,7 @@ const PILLARS = [
   },
 ]
 
-export default function Landing({ report, metrics, onLaunch }) {
+export default function Landing({ report, metrics, onEnter, onWatch }) {
   const d = report?.detection
   const g = report?.diagnosis
   const e = report?.end_to_end
@@ -52,8 +52,8 @@ export default function Landing({ report, metrics, onLaunch }) {
           <span className="lp-mark" aria-hidden="true" />
           Payment Incident Commander
         </div>
-        <button className="lp-cta sm" onClick={onLaunch}>
-          Launch the demo
+        <button className="lp-cta sm" onClick={onEnter}>
+          Open the console
         </button>
       </header>
 
@@ -70,7 +70,7 @@ export default function Landing({ report, metrics, onLaunch }) {
           whether their own fix actually worked. When it didn’t, they undo it and hand over.
         </p>
         <div className="lp-actions">
-          <button className="lp-cta" onClick={onLaunch}>
+          <button className="lp-cta" onClick={onWatch}>
             Watch it handle an incident
           </button>
           <a className="lp-ghost" href="https://github.com/vaibhavdabas16/payment-incident-commander">
@@ -208,8 +208,8 @@ export default function Landing({ report, metrics, onLaunch }) {
           scripted — the same detector, agents, policy gateway and tools run whether you are
           watching or the benchmark is.
         </p>
-        <button className="lp-cta" onClick={onLaunch}>
-          Launch the demo
+        <button className="lp-cta" onClick={onWatch}>
+          Break something and watch
         </button>
         {metrics ? (
           <span className="lp-live">

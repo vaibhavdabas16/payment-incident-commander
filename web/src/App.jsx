@@ -2,28 +2,43 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Landing from './Landing.jsx'
 import { api, connectStream, formatClock } from './api.js'
 import { Led } from './components.jsx'
-import { Agents, Benchmark, CommandCenter, Health, Incidents } from './pages.jsx'
+import { CommandCenter, Health, Incidents, Proof } from './pages.jsx'
 import Simulate from './Simulate.jsx'
 
 const POLL_MS = 1500
 
 const NAV = [
-  ['command', 'Command Center', 'ico-grid'],
+  ['command', 'Overview', 'ico-grid'],
   ['incidents', 'Incidents', 'ico-pulse'],
   ['simulate', 'Simulate', 'ico-time'],
   ['health', 'Payment Health', 'ico-heart'],
-  ['analytics', 'Analytics', 'ico-chart'],
+  // How it works and how well it works are the same question for a visitor, and neither is a
+  // place you do anything — they were two nav items pretending to be workspaces.
+  ['proof', 'How it works', 'ico-chart'],
 ]
 
-const PAGE_KEYS = [...NAV.map(([k]) => k), 'agents']
+const PAGE_KEYS = NAV.map(([k]) => k)
+
+// The scenario the landing page starts, because it is the one that shows the whole claim: the
+// obvious fix cannot work, so the agent measures, reverts and hands over.
+const HEADLINE_SCENARIO = 'SCN-UPI-PSP-BADFALLBACK'
 
 const ROUTE = '#/app/'
 
-function readPage() {
-  if (typeof window === 'undefined') return 'command'
+function readRoute() {
+  if (typeof window === 'undefined') return { page: 'command', incident: null }
   const hash = window.location.hash
-  const key = hash.startsWith(ROUTE) ? hash.slice(ROUTE.length) : ''
-  return PAGE_KEYS.includes(key) ? key : 'command'
+  const rest = hash.startsWith(ROUTE) ? hash.slice(ROUTE.length) : ''
+  const [key, id] = rest.split('/')
+  return {
+    page: PAGE_KEYS.includes(key) ? key : 'command',
+    // An incident carries its own address, so a link can point at one rather than at a list.
+    incident: key === 'incidents' && id ? decodeURIComponent(id) : null,
+  }
+}
+
+function readPage() {
+  return readRoute().page
 }
 
 function readEntered() {
@@ -47,6 +62,7 @@ export default function App() {
   const [error, setError] = useState(null)
   const [notice, setNotice] = useState(null)
   const [page, setPage] = useState(readPage)
+  const linkedIncident = useRef(readRoute().incident)
   const [collapsed, setCollapsed] = useState(false)
   // The landing page is the front door; a deep link to any page skips it.
   const [entered, setEntered] = useState(readEntered)
@@ -111,14 +127,26 @@ export default function App() {
   }, [selectedId])
 
   useEffect(() => {
-    const onHash = () => { setEntered(readEntered()); setPage(readPage()) }
+    const onHash = () => {
+      const route = readRoute()
+      setEntered(readEntered())
+      setPage(route.page)
+      if (route.incident) { pinned.current = true; setSelectedId(route.incident) }
+    }
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
+  // The URL follows the incident, so a specific one can be linked to and reloaded.
   useEffect(() => {
-    if (entered && window.location.hash !== ROUTE + page) window.location.hash = ROUTE + page
-  }, [page, entered])
+    if (!entered) return
+    const want = ROUTE + page + (page === 'incidents' && selectedId ? `/${selectedId}` : '')
+    if (window.location.hash !== want) window.location.hash = want
+  }, [page, entered, selectedId])
+
+  useEffect(() => {
+    if (linkedIncident.current) { setSelectedId(linkedIncident.current); linkedIncident.current = null }
+  }, [])
 
   /* -------------------------------------------------------------- actions */
 
@@ -157,7 +185,15 @@ export default function App() {
       <Landing
         report={evaluation}
         metrics={metrics}
-        onLaunch={() => { window.location.hash = ROUTE + 'command'; setEntered(true); setPage('command'); window.scrollTo({ top: 0 }) }}
+        onEnter={() => { window.location.hash = ROUTE + 'command'; setEntered(true); setPage('command'); window.scrollTo({ top: 0 }) }}
+        onWatch={() => {
+          const s = scenarios.find((x) => x.scenario_id === HEADLINE_SCENARIO)
+          window.location.hash = ROUTE + 'command'
+          setEntered(true)
+          setPage('command')
+          window.scrollTo({ top: 0 })
+          if (s) inject(s)
+        }}
       />
     )
   }
@@ -190,14 +226,6 @@ export default function App() {
           ))}
         </div>
 
-        <div className="nav-group">
-          <div className="nav-label">System</div>
-          <button className={`nav-item ${page === 'agents' ? 'on' : ''}`} onClick={() => setPage('agents')}>
-            <span className="ico ico-agent" aria-hidden="true" />
-            <span>Agent Fleet</span>
-          </button>
-        </div>
-
         <div className="side-foot">
           <button className="side-toggle" onClick={() => setCollapsed((c) => !c)}>
             {collapsed ? '›' : '‹  Collapse'}
@@ -226,6 +254,10 @@ export default function App() {
           {page === 'command' ? (
             <CommandCenter
               {...shared}
+              onRunHeadline={() => {
+                const s = scenarios.find((x) => x.scenario_id === HEADLINE_SCENARIO)
+                if (s) inject(s)
+              }}
               selectedId={selectedId}
               onSelect={(id) => { pinned.current = true; setSelectedId(id) }}
               onOpen={open} onApprove={approve} onReject={reject} onGoto={setPage}
@@ -241,8 +273,7 @@ export default function App() {
               onInject={inject} onCustom={runCustom} onReset={reset} onGoto={setPage}
             />
           ) : null}
-          {page === 'analytics' ? <Benchmark report={evaluation} /> : null}
-          {page === 'agents' ? <Agents agents={agents} /> : null}
+          {page === 'proof' ? <Proof report={evaluation} agents={agents} /> : null}
         </main>
       </div>
     </div>
