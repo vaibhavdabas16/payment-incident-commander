@@ -6,6 +6,7 @@ If it is not in this file, it is not part of an agent contract.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
@@ -89,8 +90,20 @@ class VerificationStatus(str, Enum):
 # --------------------------------------------------------------------------
 
 
-class PaymentEvent(BaseModel):
-    """One payment attempt. Money is always integer paise (ADR-008)."""
+@dataclass(slots=True)
+class PaymentEvent:
+    """One payment attempt. Money is always integer paise (ADR-008).
+
+    A plain slotted dataclass rather than a pydantic model, because there are a great many of
+    these and they never cross a trust boundary: the simulator is the only thing that constructs
+    one, nothing serialises them, and every consumer reads them by attribute. As a model each
+    instance carried a `__dict__` and a `__pydantic_fields_set__` — a set of all twenty-one field
+    names, 2,264 bytes on its own — for about 3.2KB an event. At the demo speed-up that is tens of
+    megabytes an hour of pure overhead, and it is what made a per-visitor simulation unaffordable.
+
+    Validation is not lost, only moved: the one invariant this type ever enforced is checked in
+    `__post_init__` and still raises on construction.
+    """
 
     payment_id: str
     order_id: str
@@ -101,27 +114,24 @@ class PaymentEvent(BaseModel):
     gateway: str
     psp: str
     issuer: str
-    network: str | None = None
     geography: str
     device: str
     os: str
     app_version: str
     status: Literal["success", "failed"]
-    error_code: str | None = None
     latency_ms: int
+    route_id: str
+    network: str | None = None
+    error_code: str | None = None
     retry_count: int = 0
     is_retry: bool = False
-    route_id: str
     # Derived at generation time so order-value-specific failures are sliceable like any other
     # dimension. The spec calls these out explicitly and they are invisible without it.
     amount_band: str = "mid"
 
-    @field_validator("amount_paise")
-    @classmethod
-    def _positive(cls, v: int) -> int:
-        if v <= 0:
+    def __post_init__(self) -> None:
+        if self.amount_paise <= 0:
             raise ValueError("amount_paise must be positive")
-        return v
 
 
 class ConfigChange(BaseModel):

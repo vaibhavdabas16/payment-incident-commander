@@ -227,6 +227,13 @@ dilutes a card-only fault into insignificance. A segment that names a shared dim
 different value cannot contain the same payment as the primary, so it cannot be an echo of it -
 that is now decided directly rather than by a test that cannot see it.
 
+**Payment events are a slotted dataclass, not a model.** They never cross a trust boundary - the
+simulator is the only thing that constructs one, nothing serialises them, and every consumer reads
+them by attribute - and as a pydantic model each carried a `__dict__` plus a
+`__pydantic_fields_set__` holding all twenty-one field names, about 3.2KB an event. As a slotted
+dataclass it is roughly 560 bytes, and a warmed engine holding two simulated hours fell from about
+250MB to 19MB. The one invariant the type enforced is still checked on construction.
+
 **Nine scenarios is a small corpus.** The accuracy figures have wide confidence intervals. Three
 seeds reduce variance from traffic sampling but not from scenario design.
 

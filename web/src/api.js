@@ -1,7 +1,33 @@
 // Thin API client. Same-origin in production (FastAPI serves the built bundle);
 // the Vite dev server proxies /api and /ws to the backend.
 
+/* Each visitor gets their own simulation on the server; this is the id that selects it. Kept in
+ * localStorage so a reload rejoins the same world rather than starting a fresh one, and generated
+ * client-side so no round trip is needed before the first request. */
+const SESSION_KEY = 'pic.session'
+
+function sessionId() {
+  try {
+    let id = localStorage.getItem(SESSION_KEY)
+    if (!id) {
+      id = (crypto.randomUUID?.() || String(Math.random()).slice(2)).replace(/-/g, '').slice(0, 24)
+      localStorage.setItem(SESSION_KEY, id)
+    }
+    return id
+  } catch {
+    // Private windows and blocked storage fall back to the shared world rather than failing.
+    return 'public'
+  }
+}
+
+export const SESSION = sessionId()
+
+function withSession(path) {
+  return path + (path.includes('?') ? '&' : '?') + 'session=' + encodeURIComponent(SESSION)
+}
+
 async function json(path, options) {
+  path = withSession(path)
   const response = await fetch(path, options)
   if (!response.ok) {
     const body = await response.text().catch(() => '')
@@ -71,7 +97,7 @@ export function connectStream(onEvent, onStatus) {
   const open = () => {
     if (closed) return
     const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-    socket = new WebSocket(`${protocol}://${location.host}/ws`)
+    socket = new WebSocket(`${protocol}://${location.host}/ws?session=${encodeURIComponent(SESSION)}`)
 
     socket.onopen = () => {
       retry = 0

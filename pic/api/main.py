@@ -13,11 +13,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+import threading
+import time
+from contextvars import ContextVar
+from dataclasses import dataclass, field
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -61,48 +66,124 @@ class Hub:
             self.clients.discard(client)
 
 
-hub = Hub()
-# The live dashboard paces itself between agent steps. Simulated waits are instantaneous, so
-# without this the pipeline finishes in milliseconds and a visitor watching the walkthrough sees
-# the verdict without ever seeing the work that produced it.
-engine = Engine(
-    EngineConfig(reasoner=None, step_pause_s=settings.live_step_pause_s),
-    emit=hub.publish,
-)
+# One simulation per visitor. A single shared engine meant one person's injected scenario
+# degraded everyone else's payments and their Reset wiped everyone else's incidents - fine for a
+# single operator, wrong for a link several people open at once.
+#
+# It is affordable because an event costs about 560 bytes rather than the 3.2KB it did as a
+# pydantic model: a warmed engine holding two simulated hours is roughly 19MB, so the cap below
+# fits comfortably in a small container with room for the interpreter and request handling.
+MAX_SESSIONS = 8
+SESSION_TTL_S = 900
+
+
+@dataclass
+class Session:
+    """One visitor's world: their own simulator, detector, agents and event stream."""
+
+    session_id: str
+    engine: Engine
+    hub: Hub
+    running: bool = True
+    speedup: float = field(default_factory=lambda: settings.live_speedup)
+    last_seen: float = field(default_factory=time.monotonic)
+
+    def touch(self) -> None:
+        self.last_seen = time.monotonic()
+
+
+_sessions: dict[str, Session] = {}
+_sessions_lock = threading.Lock()
+_current: ContextVar[Session] = ContextVar("current_session")
 _sim_task: asyncio.Task | None = None
-_state = {"running": False, "speedup": settings.live_speedup}
+
+
+def _build_session(session_id: str) -> Session:
+    """Create and warm a session. Blocking - callers hand this to a worker thread."""
+    hub = Hub()
+    engine = Engine(
+        # The live dashboard paces itself between agent steps. Simulated waits are instantaneous,
+        # so without this the pipeline finishes in milliseconds and a visitor watching sees the
+        # verdict without ever seeing the work that produced it.
+        EngineConfig(reasoner=None, step_pause_s=settings.live_step_pause_s),
+        emit=hub.publish,
+    )
+    engine.warmup(45)
+    return Session(session_id=session_id, engine=engine, hub=hub)
+
+
+def _evict_locked() -> None:
+    """Drop idle sessions, then the oldest, so a shared link cannot exhaust the container."""
+    now = time.monotonic()
+    for sid, sess in list(_sessions.items()):
+        if sid != "public" and now - sess.last_seen > SESSION_TTL_S:
+            del _sessions[sid]
+    while len(_sessions) > MAX_SESSIONS:
+        oldest = min((s for s in _sessions.values() if s.session_id != "public"),
+                     key=lambda s: s.last_seen, default=None)
+        if oldest is None:
+            break
+        del _sessions[oldest.session_id]
+
+
+def get_session(session_id: str) -> Session:
+    with _sessions_lock:
+        sess = _sessions.get(session_id)
+        if sess is not None:
+            sess.touch()
+            return sess
+    built = _build_session(session_id)
+    with _sessions_lock:
+        existing = _sessions.get(session_id)
+        if existing is not None:
+            return existing
+        _sessions[session_id] = built
+        _evict_locked()
+    return built
+
+
+def eng() -> Engine:
+    """The engine belonging to the request being handled."""
+    return _current.get().engine
+
+
+def sess() -> Session:
+    return _current.get()
 
 
 async def _simulation_loop() -> None:
-    """Advance the world and run a detection cycle every monitoring interval."""
+    """Advance every live session and run a detection cycle for each."""
     interval = 1.0
     while True:
-        try:
-            await asyncio.sleep(interval)
-            if not _state["running"]:
-                continue
-            seconds = interval * float(_state["speedup"])
-            # Run the blocking simulation step off the event loop so the WebSocket stays responsive.
-            incident = await asyncio.to_thread(_advance_and_detect, seconds)
-            if incident is not None:
-                await asyncio.to_thread(engine.supervisor.run_incident, incident)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # never let one bad cycle kill the live demo
-            hub.publish("engine_error", {"error": f"{type(exc).__name__}: {exc}"})
+        await asyncio.sleep(interval)
+        with _sessions_lock:
+            live = [s for s in _sessions.values() if s.running]
+        for session in live:
+            try:
+                seconds = interval * float(session.speedup)
+                # Off the event loop so the WebSocket stays responsive.
+                incident = await asyncio.to_thread(_advance_and_detect, session, seconds)
+                if incident is not None:
+                    await asyncio.to_thread(session.engine.supervisor.run_incident, incident)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # one bad cycle must not kill anyone else's session
+                session.hub.publish("engine_error", {"error": f"{type(exc).__name__}: {exc}"})
 
 
-def _advance_and_detect(seconds: float):
-    engine.advance(seconds)
-    return engine.supervisor.observe()
+def _advance_and_detect(session: Session, seconds: float):
+    session.engine.advance(seconds)
+    return session.engine.supervisor.observe()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _sim_task
-    hub.loop = asyncio.get_running_loop()
-    await asyncio.to_thread(engine.warmup, 45)
-    _state["running"] = True
+    loop = asyncio.get_running_loop()
+    # "public" is the fallback for a client that sends no session id. Warmed up front so the
+    # first request does not pay for it.
+    public = await asyncio.to_thread(get_session, "public")
+    public.hub.loop = loop
     _sim_task = asyncio.create_task(_simulation_loop())
     try:
         yield
@@ -112,6 +193,26 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Payment Incident Commander", version="1.0.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def bind_session(request: Request, call_next):
+    """Resolve which visitor's simulation this request belongs to."""
+    sid = request.query_params.get("session") or request.headers.get("x-session-id") or "public"
+    sid = re.sub(r"[^A-Za-z0-9_-]", "", sid)[:64] or "public"
+    with _sessions_lock:
+        found = _sessions.get(sid)
+        if found is not None:
+            found.touch()
+    if found is None:
+        # Building one warms 45 minutes of traffic, so keep it off the event loop.
+        found = await asyncio.to_thread(get_session, sid)
+        found.hub.loop = asyncio.get_running_loop()
+    token = _current.set(found)
+    try:
+        return await call_next(request)
+    finally:
+        _current.reset(token)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -129,22 +230,22 @@ app.add_middleware(
 def health() -> dict[str, Any]:
     return {
         "ok": True,
-        "reasoner": engine.reasoner.name,
-        "events_generated": len(engine.store),
-        "simulated_time": engine.now.isoformat(),
-        "running": _state["running"],
-        "speedup": _state["speedup"],
+        "reasoner": eng().reasoner.name,
+        "events_generated": len(eng().store),
+        "simulated_time": eng().now.isoformat(),
+        "running": sess().running,
+        "speedup": sess().speedup,
     }
 
 
 @app.get("/api/metrics")
 def metrics() -> dict[str, Any]:
-    return engine.current_metrics()
+    return eng().current_metrics()
 
 
 @app.get("/api/series")
 def series(window_seconds: int = 60, count: int = 60) -> dict[str, Any]:
-    return {"points": engine.success_rate_series(window_seconds, count)}
+    return {"points": eng().success_rate_series(window_seconds, count)}
 
 
 @app.get("/api/incidents")
@@ -167,14 +268,14 @@ def incidents() -> dict[str, Any]:
                 "revenue_protected_per_hour_paise": i.revenue_protected_per_hour_paise,
                 "awaiting_approval": i.state is IncidentState.AWAITING_HUMAN_APPROVAL,
             }
-            for i in reversed(engine.incidents())
+            for i in reversed(eng().incidents())
         ]
     }
 
 
 @app.get("/api/incidents/{incident_id}")
 def incident_detail(incident_id: str) -> dict[str, Any]:
-    for i in engine.incidents():
+    for i in eng().incidents():
         if i.incident_id == incident_id:
             return i.model_dump(mode="json")
     raise HTTPException(status_code=404, detail=f"unknown incident {incident_id}")
@@ -200,7 +301,7 @@ def scenarios() -> dict[str, Any]:
                 # So the dashboard can show what is already running, rather than letting a
                 # visitor stack degradations without realising it.
                 "active": any(
-                    a.scenario.scenario_id == s.scenario_id for a in engine.simulator.active
+                    a.scenario.scenario_id == s.scenario_id for a in eng().simulator.active
                 ),
             }
             for s in SCENARIOS.values()
@@ -232,13 +333,13 @@ def segment_health(minutes: int = 5) -> dict[str, Any]:
     """
     from datetime import timedelta
 
-    end = engine.simulator.now
+    end = eng().simulator.now
     start = end - timedelta(minutes=minutes)
-    base = engine.detector.baseline(end)
+    base = eng().detector.baseline(end)
 
     def rows(dimension: str) -> list[dict[str, Any]]:
         out = []
-        for stat in engine.store.segment_stats(
+        for stat in eng().store.segment_stats(
             start, end, dimension, base.start, base.end, min_volume=15
         ):
             deviation = stat.deviation
@@ -282,7 +383,7 @@ def segment_health(minutes: int = 5) -> dict[str, Any]:
 @app.get("/api/agents")
 def agents() -> dict[str, Any]:
     """The agent pipeline, in the order the supervisor runs it."""
-    s = engine.supervisor
+    s = eng().supervisor
     ordered = [
         s.detection_agent,
         s.investigation_agent,
@@ -420,7 +521,7 @@ def custom_scenario(body: CustomIncident) -> dict[str, Any]:
         ],
         recommended_action="escalate",
     )
-    engine.trigger(scenario)
+    eng().trigger(scenario)
     return {"triggered": scenario.scenario_id, "name": scenario.name, "description": scenario.description}
 
 
@@ -428,7 +529,7 @@ def custom_scenario(body: CustomIncident) -> dict[str, Any]:
 def trigger(scenario_id: str) -> dict[str, Any]:
     if scenario_id not in SCENARIOS:
         raise HTTPException(status_code=404, detail=f"unknown scenario {scenario_id}")
-    scenario = engine.trigger(scenario_id)
+    scenario = eng().trigger(scenario_id)
     return {"triggered": scenario.scenario_id, "name": scenario.name}
 
 
@@ -437,7 +538,7 @@ async def approve(incident_id: str, approver: str = "operator") -> dict[str, Any
     incident = _find(incident_id)
     if incident.state is not IncidentState.AWAITING_HUMAN_APPROVAL:
         raise HTTPException(status_code=409, detail="incident is not awaiting approval")
-    await asyncio.to_thread(engine.supervisor.approve, incident, approver)
+    await asyncio.to_thread(eng().supervisor.approve, incident, approver)
     return {"incident_id": incident_id, "state": incident.state.value, "outcome": incident.outcome}
 
 
@@ -446,40 +547,40 @@ async def reject(incident_id: str, approver: str = "operator") -> dict[str, Any]
     incident = _find(incident_id)
     if incident.state is not IncidentState.AWAITING_HUMAN_APPROVAL:
         raise HTTPException(status_code=409, detail="incident is not awaiting approval")
-    await asyncio.to_thread(engine.supervisor.reject, incident, approver)
+    await asyncio.to_thread(eng().supervisor.reject, incident, approver)
     return {"incident_id": incident_id, "state": incident.state.value, "outcome": incident.outcome}
 
 
 @app.post("/api/control/{command}")
 def control(command: str, speedup: float | None = None) -> dict[str, Any]:
     if command == "pause":
-        _state["running"] = False
+        sess().running = False
     elif command == "resume":
-        _state["running"] = True
+        sess().running = True
     elif command == "speed" and speedup is not None:
-        _state["speedup"] = max(1.0, min(600.0, speedup))
+        sess().speedup = max(1.0, min(600.0, speedup))
     elif command == "reset":
         # A shared demo needs a way back to a clean baseline. Without it, scenarios accumulate:
         # three overlapping degradations leave the merchant at 55% success, and every new
         # injection correlates into the incident already open instead of showing up as its own -
         # so the button looks broken when it is working exactly as designed.
-        engine.simulator.deactivate_all()
-        engine.supervisor.incidents.clear()
-        engine.supervisor._incident_seq = 0
-        engine.detector._degraded_periods.clear()
+        eng().simulator.deactivate_all()
+        eng().supervisor.incidents.clear()
+        eng().supervisor._incident_seq = 0
+        eng().detector._degraded_periods.clear()
     else:
         raise HTTPException(status_code=400, detail=f"unknown command {command}")
-    return {"running": _state["running"], "speedup": _state["speedup"]}
+    return {"running": sess().running, "speedup": sess().speedup}
 
 
 @app.get("/api/notifications")
 def notifications() -> dict[str, Any]:
-    return {"notifications": engine.notifications(), "tickets": engine.tickets()}
+    return {"notifications": eng().notifications(), "tickets": eng().tickets()}
 
 
 @app.get("/api/policy")
 def policy() -> dict[str, Any]:
-    return engine.gateway.policy
+    return eng().gateway.policy
 
 
 @app.get("/api/evaluation")
@@ -501,7 +602,7 @@ def evaluation() -> Any:
 
 
 def _find(incident_id: str):
-    for i in engine.incidents():
+    for i in eng().incidents():
         if i.incident_id == incident_id:
             return i
     raise HTTPException(status_code=404, detail=f"unknown incident {incident_id}")
@@ -515,10 +616,13 @@ def _find(incident_id: str):
 @app.websocket("/ws")
 async def websocket(ws: WebSocket) -> None:
     await ws.accept()
-    hub.clients.add(ws)
+    sid = re.sub(r"[^A-Za-z0-9_-]", "", ws.query_params.get("session") or "public")[:64] or "public"
+    session = await asyncio.to_thread(get_session, sid)
+    session.hub.loop = asyncio.get_running_loop()
+    session.hub.clients.add(ws)
     try:
         # Replay recent history so a client joining mid-incident sees the lifecycle so far.
-        await ws.send_text(json.dumps({"kind": "replay", "events": hub.buffer[-120:]}, default=str))
+        await ws.send_text(json.dumps({"kind": "replay", "events": session.hub.buffer[-120:]}, default=str))
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
@@ -526,7 +630,7 @@ async def websocket(ws: WebSocket) -> None:
     except Exception:
         pass
     finally:
-        hub.clients.discard(ws)
+        session.hub.clients.discard(ws)
 
 
 # --------------------------------------------------------------------------
