@@ -8,8 +8,10 @@ would mean anything.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from .agents.supervisor import Clock, IncidentSupervisor
@@ -43,6 +45,14 @@ class EngineConfig:
     step_cost_s: float | None = None
     # Real seconds to pause between agent steps so a viewer can follow along. Live use only.
     step_pause_s: float = 0.0
+    # Live mode: events arrive by ingestion rather than being generated, the clock is the real
+    # one, and `control` is where approved actions are actually applied. Without a control plane
+    # the system still detects, investigates, prices and diagnoses — it simply cannot act.
+    live: bool = False
+    control: Any = None
+    # The merchant's own limits: which routes traffic may move to, how much may move at once, what
+    # needs a human. Defaults to the bundled policy, which describes the simulator.
+    policy_path: Path | None = None
     start_time: datetime = field(
         default_factory=lambda: datetime(2026, 8, 24, 10, 0, 0, tzinfo=timezone.utc)
     )
@@ -58,24 +68,36 @@ class Engine:
         self.events: list[EngineEvent] = []
         self._external_emit = emit
 
+        self.live = self.config.live
         self.store = EventStore()
         self.simulator = PaymentSimulator(
             self.store, seed=self.config.seed, start_time=self.config.start_time
         )
+        # In live mode the simulator is constructed but never advanced: it is not the source of
+        # traffic, and reading the clock off a world that never moves would freeze every window.
+        self._now: Callable[[], datetime] = (
+            (lambda: datetime.now(timezone.utc)) if self.live else (lambda: self.simulator.now)
+        )
+        control = self.config.control if self.live else self.simulator.control
+        if self.live and control is None:
+            from .integration.control import ReadOnlyControlPlane
+
+            control = ReadOnlyControlPlane()
+        self.control = control
         self.detector = Detector(self.store)
         self.memory = IncidentMemory(persist=self.config.persist_memory)
-        self.gateway = PolicyGateway()
+        self.gateway = PolicyGateway(policy_path=self.config.policy_path)
         self.reasoner = build_reasoner(self.config.reasoner)
 
         self.tool_context = ToolContext(
             store=self.store,
-            now=self.simulator.now,
-            control=self.simulator.control,
+            now=self._now(),
+            control=self.control,
             memory=self.memory,
         )
         self.registry = build_registry(self.tool_context)
 
-        self.clock = Clock(now=lambda: self.simulator.now, wait=self._wait)
+        self.clock = Clock(now=self._now, wait=self._wait)
         self.supervisor = IncidentSupervisor(
             store=self.store,
             detector=self.detector,
@@ -84,7 +106,7 @@ class Engine:
             gateway=self.gateway,
             clock=self.clock,
             memory=self.memory,
-            control=self.simulator.control,
+            control=self.control,
             emit=self._emit,
             step_cost_s=self.config.step_cost_s,
             step_pause_s=self.config.step_pause_s,
@@ -93,7 +115,7 @@ class Engine:
     # ---------------------------------------------------------------- events
 
     def _emit(self, kind: str, payload: dict[str, Any]) -> None:
-        event = EngineEvent(kind=kind, payload=payload, at=self.simulator.now)
+        event = EngineEvent(kind=kind, payload=payload, at=self._now())
         self.events.append(event)
         if self._external_emit:
             self._external_emit(kind, {**payload, "_at": event.at.isoformat()})
@@ -101,22 +123,36 @@ class Engine:
     # ----------------------------------------------------------------- clock
 
     def _wait(self, seconds: float) -> None:
-        """Advance simulated time, generating the traffic that occurs during the wait.
+        """Stand back and let traffic accumulate, then carry on.
 
         This is what makes verification real: the events the Verification Agent measures are
-        produced by the simulator under whatever configuration the Action Agent just applied.
+        produced *after* the Action Agent's change, under whatever configuration it applied. In
+        simulation that means generating the traffic for the interval; live it means genuinely
+        waiting, while other requests ingest the payments that are actually happening.
         """
-        self.simulator.advance_seconds(seconds)
-        self.tool_context.now = self.simulator.now
+        if self.live:
+            time.sleep(max(0.0, seconds))
+        else:
+            self.simulator.advance_seconds(seconds)
+        self.tool_context.now = self._now()
 
     # ------------------------------------------------------------- lifecycle
 
     def warmup(self, minutes: int | None = None) -> "Engine":
+        """Generate history so the detector has a baseline. Simulation only.
+
+        A live deployment earns its baseline the slow way, from real traffic, which is the only
+        honest version of it — a synthetic baseline would describe a merchant that does not exist.
+        """
+        if self.live:
+            return self
         self.simulator.warmup(minutes if minutes is not None else self.config.warmup_minutes)
-        self.tool_context.now = self.simulator.now
+        self.tool_context.now = self._now()
         return self
 
     def trigger(self, scenario: str | Scenario) -> Scenario:
+        if self.live:
+            raise RuntimeError("scenarios cannot be injected into a live merchant's traffic")
         resolved = get_scenario(scenario) if isinstance(scenario, str) else scenario
         self.simulator.activate(resolved)
         self._emit(
@@ -156,7 +192,7 @@ class Engine:
 
     @property
     def now(self) -> datetime:
-        return self.simulator.now
+        return self._now()
 
     def incidents(self) -> list[IncidentRecord]:
         return self.supervisor.incidents
@@ -178,7 +214,7 @@ class Engine:
         """Live headline numbers for the dashboard."""
         from datetime import timedelta
 
-        end = self.simulator.now
+        end = self._now()
         start = end - timedelta(seconds=window_seconds)
         window = self.store.metric_window(start, end)
         baseline = self.detector.baseline(end)
@@ -213,11 +249,11 @@ class Engine:
             "revenue_at_risk_per_hour_paise": revenue_at_risk,
             "revenue_protected_per_hour_paise": protected,
             "agent_status": _agent_status(active),
-            "control_plane": self.simulator.control.snapshot(),
+            "control_plane": self.control.snapshot(),
         }
 
     def success_rate_series(self, window_seconds: int = 60, count: int = 60) -> list[dict[str, Any]]:
-        series = self.store.success_rate_series(self.simulator.now, window_seconds, count)
+        series = self.store.success_rate_series(self._now(), window_seconds, count)
         return [
             {
                 "t": w.start.isoformat(),

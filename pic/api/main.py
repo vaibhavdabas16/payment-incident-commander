@@ -29,6 +29,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ..config import settings
+from ..integration.tenant import registry
+from .v1 import router as v1_router
 from ..engine import Engine, EngineConfig
 from ..schemas import IncidentState
 from ..simulation.scenarios import SCENARIOS, Effect, Scenario
@@ -115,6 +117,8 @@ _sessions: dict[str, Session] = {}
 _sessions_lock = threading.Lock()
 _current: ContextVar[Session] = ContextVar("current_session")
 _sim_task: asyncio.Task | None = None
+# Background tasks other than the simulation loop, cancelled together on shutdown.
+_tasks: list[asyncio.Task] = []
 
 
 def _build_session(session_id: str) -> Session:
@@ -173,6 +177,34 @@ def eng() -> Engine:
 
 def sess() -> Session:
     return _current.get()
+
+
+async def _live_loop() -> None:
+    """Sweep each configured merchant's real traffic on their own monitoring interval.
+
+    Nothing here advances a clock: the world moves because payments are ingested by other
+    requests. All this does is ask, on a schedule, whether what has arrived looks wrong — and if it
+    does, run the same eight agents the demo runs.
+    """
+    if not registry.configured:
+        return
+    while True:
+        await asyncio.sleep(1.0)
+        now = time.monotonic()
+        for tenant in registry.all():
+            if now - tenant.last_detected_at < tenant.monitoring_interval_s:
+                continue
+            tenant.last_detected_at = now
+            try:
+                # Both calls block: detection is a full statistical sweep, and running an incident
+                # genuinely waits real seconds before verifying. Neither belongs on the event loop.
+                incident = await asyncio.to_thread(tenant.engine.supervisor.observe)
+                if incident is not None:
+                    await asyncio.to_thread(tenant.engine.supervisor.run_incident, incident)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # one merchant's bad cycle must not stop the others
+                print(f"[live] {tenant.merchant_id}: {type(exc).__name__}: {exc}", flush=True)
 
 
 async def _simulation_loop() -> None:
@@ -236,14 +268,24 @@ async def lifespan(app: FastAPI):
     public = await asyncio.to_thread(get_session, "public")
     public.hub.loop = loop
     _sim_task = asyncio.create_task(_simulation_loop())
+    merchants = registry.load()
+    if merchants:
+        print(f"[live] serving {len(merchants)} merchant(s): {', '.join(merchants)}", flush=True)
+        _live_task = asyncio.create_task(_live_loop())
+        _tasks.append(_live_task)
     try:
         yield
     finally:
+        for task in _tasks:
+            task.cancel()
+        _tasks.clear()
         if _sim_task:
             _sim_task.cancel()
 
 
 app = FastAPI(title="Payment Incident Commander", version="1.0.0", lifespan=lifespan)
+# The integration API. Authenticated per merchant, and inert until one is configured.
+app.include_router(v1_router)
 
 
 @app.middleware("http")

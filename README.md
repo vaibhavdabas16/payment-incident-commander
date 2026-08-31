@@ -78,6 +78,46 @@ see [ADR-003](docs/DECISIONS.md).
 
 ---
 
+## Point it at your own payments
+
+The demo runs a simulator because that is what makes it watchable end to end in ninety seconds. A
+deployment replaces the two ends and **nothing in between** — same detector, same eight agents,
+same policy gateway, same benchmark.
+
+```bash
+export PIC_MERCHANTS='[{"merchant_id":"acme","api_key":"pic_live_...",
+                        "policy_file":"/etc/pic/acme_policy.yaml"}]'
+```
+
+```bash
+curl -X POST https://your-host/api/v1/events \
+  -H "Authorization: Bearer pic_live_..." \
+  -d '{"events":[{"payment_id":"pay_29QL8xKm","timestamp":"2026-08-31T18:04:11Z",
+                  "amount_paise":249900,"payment_method":"upi","status":"captured",
+                  "psp":"psp_axis","route_id":"route_upi_primary"}]}'
+```
+
+Five fields are required; everything else sharpens diagnosis when present. Retrying is safe —
+duplicates are dropped by `payment_id`. An unrecognised status is **rejected, not guessed**: mapping
+one to failed would invent an outage and to success would hide one.
+
+Approved actions leave as an HMAC-signed webhook to an endpoint you control, and **your response is
+the source of truth** — anything but a 2xx is read as *not applied*, so the agent hands over instead
+of measuring a change that never happened. Without an `action_endpoint` it runs read-only: detects,
+prices and diagnoses, and fails closed on any attempt to act.
+
+Verified end to end over HTTP with nothing reaching inside the process — traffic forwarded,
+degradation detected (`psp=psp_axis`, ₹16.6L/hr at risk), held for a human because confidence 0.65
+was below the merchant's 0.70 floor, approved via the API, and the signed `shift_traffic` webhook
+applied on the merchant's own endpoint.
+
+**[Full integration guide →](docs/INTEGRATION.md)** — wire format, webhook contract, signature
+verification, policy setup, and the limits worth knowing first. Working examples in
+[`examples/`](examples/): [`forward_payments.py`](examples/forward_payments.py) sends traffic,
+[`receive_actions.py`](examples/receive_actions.py) receives and applies the actions.
+
+---
+
 ## What makes this different
 
 Most "AI for payments" demos stop at detection, or wrap an LLM around a dashboard. Four things here
@@ -296,10 +336,12 @@ pic/
   llm/                Reasoner interface, Gemini client, deterministic fallback
   memory/             incident memory + deterministic similarity retrieval
   evaluation/         the benchmark harness
-  api/                FastAPI backend + WebSocket stream
+  api/                FastAPI backend + WebSocket stream + /api/v1 integration API
+  integration/        wire format, ingestion, HMAC signing, webhook control plane
 web/                  React dashboard (Vite)
-tests/                safety invariants, detection quality, end-to-end lifecycles
-docs/                 ARCHITECTURE · DECISIONS · EVALUATION · DEMO
+examples/             forward your payments in, receive actions out
+tests/                safety invariants, detection quality, end-to-end lifecycles, integration
+docs/                 ARCHITECTURE · DECISIONS · EVALUATION · INTEGRATION · DEMO
 ```
 
 ---
@@ -321,6 +363,12 @@ docs/                 ARCHITECTURE · DECISIONS · EVALUATION · DEMO
   degradation it caused. Rollback success is 1.0 of 7, and the remaining failed verifications are
   genuine failed interventions rather than an artefact.
 - **Nine scenarios is a small corpus.** Accuracy figures carry wide confidence intervals.
+- **A live deployment is single-process and in-memory.** Events live in RAM behind a six-hour
+  retention window and incident history does not survive a restart, so two replicas would each see
+  half a merchant's traffic and neither would hold a correct baseline. Run one instance per
+  merchant. There is no backfill either: a baseline has to accumulate from live traffic, which
+  takes about thirty minutes, and a merchant who integrates *during* an outage will have that
+  outage learned as normal. [docs/INTEGRATION.md](docs/INTEGRATION.md) lists the rest.
 - **Revenue estimates are noisy early in an incident, but no longer biased.** They used to be
   systematically low - 21 of 24 runs under-estimated, by 42% at the median - because valuation
   required each `(payment method x value band)` cell to hold 20 payments, and on a two-minute
