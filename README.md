@@ -106,10 +106,15 @@ the source of truth** — anything but a 2xx is read as *not applied*, so the ag
 of measuring a change that never happened. Without an `action_endpoint` it runs read-only: detects,
 prices and diagnoses, and fails closed on any attempt to act.
 
-Verified end to end over HTTP with nothing reaching inside the process — traffic forwarded,
+**To be exact about what has been proven:** the integration path is built and exercised end to end
+over HTTP, with nothing reaching inside the process — events forwarded through the public API,
 degradation detected (`psp=psp_axis`, ₹16.6L/hr at risk), held for a human because confidence 0.65
-was below the merchant's 0.70 floor, approved via the API, and the signed `shift_traffic` webhook
-applied on the merchant's own endpoint.
+was below the merchant's 0.70 floor, approved through the API, and the signed `shift_traffic`
+webhook applied on a merchant endpoint running from [`examples/`](examples/). **The payments in
+that run were synthetic** — no real merchant's traffic has ever been connected to this. What is
+tested is the transport, the validation, and that the same agents behave correctly on events they
+did not generate. Whether it holds at a real merchant's volume, data quality and clock skew is
+unproven.
 
 **[Full integration guide →](docs/INTEGRATION.md)** — wire format, webhook contract, signature
 verification, policy setup, and the limits worth knowing first. Working examples in
