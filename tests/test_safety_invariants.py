@@ -620,3 +620,54 @@ def test_an_acknowledged_incident_is_not_picked_back_up_by_automation():
     assert incident.outcome == "ACKNOWLEDGED_BY_HUMAN"
     assert "ops@acme.example" in incident.escalation.recommended_human_action
     assert incident.state is IncidentState.CLOSED
+
+
+def test_a_rule_that_prevents_harm_is_never_offered_as_an_override():
+    """The destination-health rule must not have a "run it anyway" button next to it.
+
+    Policy rules are named `family:name`. The non-overridable set held bare family names and
+    compared them for equality against the full identifier, so nothing matched and the live site
+    offered "Run shift traffic anyway" beneath a refusal that said, in the same panel, "destination
+    route route_B is at 66.2% success rate, below the required 80%". Moving payments onto a route
+    that is itself broken is the precise harm that rule exists to prevent.
+    """
+    from pic.agents.escalation import is_overridable
+
+    # Uncertainty about whether to act: a human is exactly who should answer these.
+    assert is_overridable(["confidence:min_confidence_for_autonomous_action"])
+    assert is_overridable(["risk:max_autonomous_risk_score", "expected_value:min"])
+    assert is_overridable(["blast_radius:human_approval_revenue_at_risk"])
+
+    # The action is unsafe or forbidden. No authority makes it a good idea.
+    assert not is_overridable(["routing:min_destination_success_rate"])
+    assert not is_overridable(["routing:eligible_routes"])
+    assert not is_overridable(["capability:allowed_actions"])
+    assert not is_overridable(["rate_limit:cooloff_after_failed_intervention"])
+    # One unsafe rule among several is still unsafe.
+    assert not is_overridable(
+        ["confidence:min_confidence_for_autonomous_action", "routing:min_destination_success_rate"]
+    )
+
+
+def test_the_supervisor_refuses_an_override_of_a_safety_rule():
+    """Hiding the button is not enough: the endpoint behind it must refuse too."""
+    from pic.schemas import ActionProposal, ActionType, PolicyDecision, PolicyOutcome
+
+    engine, incident = _handed_over()
+    incident.proposal = ActionProposal(
+        incident_id=incident.incident_id,
+        action=ActionType.SHIFT_TRAFFIC,
+        parameters={"from_route": "route_A", "to_route": "route_B", "percentage": 20.0},
+    )
+    incident.policy_decision = PolicyDecision(
+        incident_id=incident.incident_id,
+        action=ActionType.SHIFT_TRAFFIC,
+        outcome=PolicyOutcome.DENY,
+        approved=False,
+        bound_by=["routing:min_destination_success_rate"],
+        reason="destination route route_B is at 66.2% success rate, below the required 80%",
+    )
+    incident.outcome = "ESCALATED"
+
+    with pytest.raises(ValueError, match="prevent the action causing harm"):
+        engine.supervisor.override(incident, who="ops", reason="I am sure")

@@ -37,7 +37,7 @@ from .base import IncidentContext
 from .decision import DecisionAgent, route_health
 from .detection import DetectionAgent
 from ..schemas import NON_REMEDIAL_ACTIONS
-from .escalation import NON_OVERRIDABLE_RULES, EscalationAgent
+from .escalation import NON_OVERRIDABLE_RULE_FAMILIES, EscalationAgent, _rule_family
 from .impact import ImpactAgent
 from .investigation import InvestigationAgent
 from .root_cause import RootCauseAgent
@@ -799,7 +799,9 @@ class IncidentSupervisor:
             raise ValueError(f"incident {incident.incident_id} has no proposed action to override")
         if decision.approved:
             raise ValueError(f"incident {incident.incident_id} was not blocked by policy")
-        blocked_by_safety = [r for r in decision.bound_by if r in NON_OVERRIDABLE_RULES]
+        blocked_by_safety = [
+            r for r in decision.bound_by if _rule_family(r) in NON_OVERRIDABLE_RULE_FAMILIES
+        ]
         if blocked_by_safety:
             # Refused here as well as hidden in the UI: a rule that protects against harm should
             # not be one API call away from being ignored.

@@ -203,11 +203,23 @@ def _because(incident: Any, reason_code: str) -> str:
     return ""
 
 
-# Rules a human may knowingly override, and rules that exist to stop the system doing harm.
-# The confidence floor says the *agent* is not sure enough to act alone, which is exactly the
-# judgement a human is there to supply. A destination-health rule says the place the traffic would
-# go is itself broken, and no amount of authority makes that a good idea.
-NON_OVERRIDABLE_RULES = {"routing"}
+# Policy rules are identified as `family:name`. These families say an action is unsafe or
+# forbidden rather than that the agent is unsure about it, so no human authority makes them
+# overridable: the destination is unhealthy or unapproved (routing), the merchant does not permit
+# the action at all (capability), or the system has already tried and must stand down (rate_limit).
+#
+# Everything else - confidence, expected value, risk appetite, "this needs a person" - is a
+# statement of uncertainty, and supplying that judgement is exactly what a human is for.
+NON_OVERRIDABLE_RULE_FAMILIES = {"routing", "capability", "rate_limit"}
+
+
+def _rule_family(rule: str) -> str:
+    return rule.split(":", 1)[0]
+
+
+def is_overridable(bound_by: list[str]) -> bool:
+    """Whether a human may proceed past the rules that bound this decision."""
+    return not any(_rule_family(rule) in NON_OVERRIDABLE_RULE_FAMILIES for rule in bound_by)
 
 
 def _refused_proposal(incident: Any) -> bool:
@@ -221,7 +233,7 @@ def _refused_proposal(incident: Any) -> bool:
         return False
     if decision.requires_human:
         return False
-    return not any(rule in NON_OVERRIDABLE_RULES for rule in decision.bound_by)
+    return is_overridable(decision.bound_by)
 
 
 def _next_steps(incident: Any, reason_code: str) -> list[NextStep]:
