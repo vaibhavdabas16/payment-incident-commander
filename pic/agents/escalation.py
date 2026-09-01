@@ -16,6 +16,8 @@ from ..schemas import (
     AgentResult,
     Escalation,
     IncidentState,
+    NextStep,
+    NON_REMEDIAL_ACTIONS,
     PolicyDecision,
     PolicyOutcome,
     ActionType,
@@ -201,6 +203,148 @@ def _because(incident: Any, reason_code: str) -> str:
     return ""
 
 
+# Rules a human may knowingly override, and rules that exist to stop the system doing harm.
+# The confidence floor says the *agent* is not sure enough to act alone, which is exactly the
+# judgement a human is there to supply. A destination-health rule says the place the traffic would
+# go is itself broken, and no amount of authority makes that a good idea.
+NON_OVERRIDABLE_RULES = {"routing"}
+
+
+def _refused_proposal(incident: Any) -> bool:
+    """Whether policy *refused* a concrete action, as opposed to holding it for a human.
+
+    Only a refusal is overridable. A hold is the gateway doing its job, and the answer to it is
+    approve or reject.
+    """
+    decision = incident.policy_decision
+    if incident.proposal is None or decision is None or decision.approved:
+        return False
+    if decision.requires_human:
+        return False
+    return not any(rule in NON_OVERRIDABLE_RULES for rule in decision.bound_by)
+
+
+def _next_steps(incident: Any, reason_code: str) -> list[NextStep]:
+    """The moves available on this incident, derived from what actually happened to it."""
+    steps: list[NextStep] = []
+    proposal = incident.proposal
+    decision = incident.policy_decision
+
+    if decision is not None and decision.requires_human and proposal is not None:
+        # The gateway is waiting on a person, which is the designed path rather than a problem to
+        # be worked around. Both answers are offered, because "no" is a decision too.
+        steps.append(
+            NextStep(
+                action="approve",
+                label=f"Approve {_readable(proposal.action)}",
+                detail=f"Policy asked for a person: {decision.reason}.",
+                consequence=(
+                    "Runs it, then measures the result against a control group and reverts it if "
+                    "the numbers do not improve."
+                ),
+                destructive=True,
+            )
+        )
+        steps.append(
+            NextStep(
+                action="reject",
+                label="Reject it",
+                detail="Nothing runs. The incident stays on the record as declined by a human.",
+                consequence="Payments are left exactly as they are.",
+            )
+        )
+
+    if _refused_proposal(incident):
+        steps.append(
+            NextStep(
+                action="override",
+                label=f"Run {_readable(proposal.action)} anyway",
+                detail=(
+                    f"Policy stopped this: {decision.reason}. Overriding records the decision "
+                    f"against your name."
+                ),
+                consequence=(
+                    "It still measures the result against a control group afterwards, and still "
+                    "reverts itself if the numbers do not improve."
+                ),
+                destructive=True,
+            )
+        )
+
+    for alternative in (proposal.alternatives_considered if proposal else [])[:6]:
+        name = str(alternative.get("action") or "").strip()
+        if not name or name == (proposal.action.value if proposal else None):
+            continue
+        # Filing a ticket or watching more closely is not an alternative remedy, and neither is
+        # doing nothing. An option that cannot move the success rate is not worth a button.
+        try:
+            if ActionType(name) in NON_REMEDIAL_ACTIONS:
+                continue
+        except ValueError:
+            continue
+        if int(alternative.get("expected_value_paise") or 0) <= 0:
+            continue
+        steps.append(
+            NextStep(
+                action=f"run_alternative:{name}",
+                label=f"Try {name.replace('_', ' ')} instead",
+                detail=(
+                    f"Costed at {format_inr(int(alternative.get('expected_value_paise') or 0))} "
+                    f"expected value and not chosen."
+                ),
+                consequence="Goes through the policy gateway like any other action.",
+                destructive=True,
+            )
+        )
+
+    if reason_code in {
+        "intervention_failed",
+        "intervention_regressed",
+        "attempts_exhausted",
+        "agent_failure",
+        "no_effective_action",
+    }:
+        steps.append(
+            NextStep(
+                action="retry",
+                label="Look again now",
+                detail=(
+                    "Re-runs detection and diagnosis against the traffic since this incident "
+                    "opened. Worth doing when the picture has changed - a fault that was "
+                    "ambiguous ten minutes ago is often obvious now."
+                ),
+                consequence="Read-only until it reaches a decision, which the gateway judges afresh.",
+            )
+        )
+
+    if reason_code == "rollback_failed":
+        steps.append(
+            NextStep(
+                action="retry_rollback",
+                label="Try the revert again",
+                detail=(
+                    "Payment routing is still in the changed state. This re-sends the recorded "
+                    "inverse of what was applied."
+                ),
+                consequence="If it fails again, the configuration must be restored by hand.",
+                destructive=True,
+            )
+        )
+
+    steps.append(
+        NextStep(
+            action="acknowledge",
+            label="I have this",
+            detail=(
+                "Records that a person took it, with a note, and takes it off the board. Use it "
+                "when the fix belongs somewhere else - a provider, a deploy, another team."
+            ),
+            consequence="Changes nothing about payments. The incident stays in the audit trail.",
+        )
+    )
+    return steps
+
+
 class EscalationAgent(Agent):
     name = "escalation"
     state = IncidentState.ESCALATED
@@ -247,6 +391,7 @@ class EscalationAgent(Agent):
             because=because,
             urgency=urgency,
             recommended_human_action=recommendation,
+            next_steps=_next_steps(incident, reason_code),
             context_pack=context_pack,
         )
 

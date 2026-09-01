@@ -743,6 +743,61 @@ details.more[open] > summary { margin-bottom: 10px; }
   .lp-bar-v { text-align: left; }
 }
 
+/* ------------------------------------------------------------ handover */
+
+.handover {
+  margin-top: 16px;
+  padding: 16px 18px;
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent);
+  border-radius: var(--r-lg);
+  background: var(--warn-bg);
+}
+.handover-why { font-size: 14px; line-height: 1.55; }
+.handover-rec { margin-top: 8px; font-size: 12.5px; color: var(--text-2); }
+.handover .steps { border-top-color: color-mix(in srgb, var(--warn) 25%, transparent); }
+
+/* ---------------------------------------------------------- next steps */
+
+/* The end of a handover, and the only part of it the operator can act on. Given the weight of a
+ * panel rather than a footnote, because it is the answer to "what now" and that question is the
+ * whole reason the incident is on their screen. */
+.steps {
+  margin-top: 14px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.steps-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.step {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--surface);
+}
+
+.step-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.step-text b { font-size: 13.5px; }
+.step-text span { font-size: 12.5px; color: var(--text-2); line-height: 1.5; }
+.step-text i { font-size: 12px; color: var(--text-3); font-style: normal; }
+.step .btn { flex: none; align-self: center; }
+
+@media (max-width: 620px) {
+  .step { flex-direction: column; align-items: stretch; }
+  .step .btn { align-self: stretch; }
+}
+
 /* ------------------------------------------------------- calm + density */
 
 /* The all-clear used to occupy a full panel of vertical space to say nothing is wrong. One line

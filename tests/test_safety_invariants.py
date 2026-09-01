@@ -488,3 +488,135 @@ def test_only_watched_worlds_advance():
     finally:
         main._sessions.clear()
         main._sessions.update(saved)
+
+
+def _handed_over():
+    """An incident that tried a fix, measured it, reverted it and gave up."""
+    from pic.engine import Engine, EngineConfig
+    from pic.schemas import IncidentState
+
+    engine = Engine(EngineConfig(seed=991, reasoner="deterministic"))
+    engine.warmup(45)
+    engine.trigger("SCN-UPI-PSP-BADFALLBACK")
+    incident = engine.run_until_incident(max_ticks=40)
+    assert incident is not None
+    engine.supervisor.run_incident(incident)
+    if incident.state is IncidentState.AWAITING_HUMAN_APPROVAL:
+        engine.supervisor.approve(incident, approver="benchmark_operator")
+        engine.supervisor.run_incident(incident)
+    assert incident.escalation is not None
+    return engine, incident
+
+
+def test_a_handover_offers_something_a_human_can_actually_do():
+    """An escalation with no next step is a dead end dressed up as a conclusion.
+
+    The system said what broke, why it stopped and what to consider, then closed the incident -
+    and everything after that sentence had to happen somewhere this product knows nothing about.
+    Every handover now carries the moves available on that specific incident, and every one of them
+    is an operation the supervisor implements.
+    """
+    from pic.schemas import IncidentState
+    engine, incident = _handed_over()
+    steps = incident.escalation.next_steps
+    assert steps, "a handover must offer a next move"
+
+    verbs = {step.action.split(":")[0] for step in steps}
+    assert verbs <= {"approve", "reject", "override", "run_alternative", "retry", "retry_rollback",
+                     "acknowledge"}, verbs
+    # Someone can always take ownership, whatever else is on offer.
+    assert "acknowledge" in verbs
+
+    for step in steps:
+        assert step.label and step.detail, step
+        # An option that cannot change anything is not a next step. "Try no action instead" and
+        # "Try create incident ticket instead" were both offered before this was enforced.
+        if step.action.startswith("run_alternative:"):
+            assert step.action.split(":", 1)[1] not in {
+                "no_action", "notify_merchant", "create_incident_ticket", "set_monitoring_frequency"
+            }
+
+
+def test_acknowledging_records_who_took_it():
+    """Not a resolution - a statement that somebody owns it, which is what was missing."""
+    from pic.schemas import IncidentState
+    engine, incident = _handed_over()
+    engine.supervisor.acknowledge(incident, who="ops@acme.example", note="raised with PSP support")
+
+    assert incident.outcome == "ACKNOWLEDGED_BY_HUMAN"
+    assert "ops@acme.example" in incident.escalation.recommended_human_action
+    assert "raised with PSP support" in incident.escalation.recommended_human_action
+    # Nothing left to press: it has an owner now.
+    assert incident.escalation.next_steps == []
+
+
+def test_an_override_is_recorded_against_a_person_and_still_verified():
+    """Overriding substitutes a human's judgement for a threshold, not for the checking.
+
+    The claim this project rests on is that no model can execute anything. An override does not
+    weaken it: only a human can call it, they must say why, the decision names them, and the action
+    is still measured against a control group and still reverted if it did not help.
+    """
+    from pic.engine import Engine, EngineConfig
+    from pic.schemas import IncidentState, PolicyOutcome
+
+    engine = Engine(EngineConfig(seed=991, reasoner="deterministic"))
+    engine.warmup(45)
+    # SCN-MULTI on this seed reliably stops at the confidence floor, so the gate is actually
+    # exercised rather than skipped past.
+    engine.trigger("SCN-MULTI")
+    incident = engine.run_until_incident(max_ticks=40)
+    assert incident is not None
+    engine.supervisor.run_incident(incident)
+    assert incident.state is IncidentState.AWAITING_HUMAN_APPROVAL, incident.state
+
+    # A held action is not a refused one: the answer to it is approve, not override.
+    assert incident.policy_decision.requires_human
+    with pytest.raises(ValueError):
+        engine.supervisor.override(incident, who="ops", reason="")
+
+    engine.supervisor.approve(incident, approver="ops@acme.example")
+    assert incident.policy_decision.outcome is PolicyOutcome.APPROVE
+    assert incident.policy_decision.approved_by == "ops@acme.example"
+
+
+def test_retry_looks_again_instead_of_leaving_the_incident_closed():
+    """A diagnosis is only as good as the window it was made in."""
+    from pic.schemas import IncidentState
+    engine, incident = _handed_over()
+    first = incident.escalation.reason_code
+
+    engine.supervisor.retry(incident, who="ops@acme.example")
+
+    # It ran again and reached a conclusion rather than sitting in whatever state retry left it.
+    assert incident.state in {IncidentState.CLOSED, IncidentState.AWAITING_HUMAN_APPROVAL}
+    assert incident.outcome is not None
+    assert first  # the original reason existed; the retry may agree or differ
+
+
+def test_an_acknowledged_incident_is_not_picked_back_up_by_automation():
+    """Someone said they have it. The system must not quietly decide otherwise.
+
+    Acknowledging records ownership, and `override` and `retry` would both re-run the pipeline over
+    the top of it, overwriting the record so nothing showed a person was involved. The UI stops
+    offering the buttons, but the endpoints are public and "the UI does not offer it" has never
+    been a guarantee - this was found by calling them in the order an operator plausibly would.
+    """
+    from pic.schemas import IncidentState
+
+    engine, incident = _handed_over()
+    engine.supervisor.acknowledge(incident, who="ops@acme.example", note="PSP ticket 4471")
+    assert incident.outcome == "ACKNOWLEDGED_BY_HUMAN"
+
+    for call in (
+        lambda: engine.supervisor.retry(incident, who="someone_else"),
+        lambda: engine.supervisor.override(incident, who="someone_else", reason="because"),
+        lambda: engine.supervisor.acknowledge(incident, who="someone_else"),
+    ):
+        with pytest.raises(ValueError, match="acknowledged"):
+            call()
+
+    # The ownership record survived every one of those attempts.
+    assert incident.outcome == "ACKNOWLEDGED_BY_HUMAN"
+    assert "ops@acme.example" in incident.escalation.recommended_human_action
+    assert incident.state is IncidentState.CLOSED

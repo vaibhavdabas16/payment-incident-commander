@@ -66,6 +66,13 @@ export const api = {
   trigger: (id) => json(`/api/scenarios/${id}/trigger`, { method: 'POST' }),
   approve: (id) => json(`/api/incidents/${id}/approve`, { method: 'POST' }),
   reject: (id) => json(`/api/incidents/${id}/reject`, { method: 'POST' }),
+  // The moves a handover offers. `who` is the operator; in a real deployment it would come from
+  // whoever they signed in as.
+  acknowledge: (id, note) =>
+    json(`/api/incidents/${id}/acknowledge?note=${encodeURIComponent(note || '')}`, { method: 'POST' }),
+  override: (id, reason) =>
+    json(`/api/incidents/${id}/override?reason=${encodeURIComponent(reason || '')}`, { method: 'POST' }),
+  retryIncident: (id) => json(`/api/incidents/${id}/retry`, { method: 'POST' }),
   control: (command, speedup) =>
     json(`/api/control/${command}${speedup ? `?speedup=${speedup}` : ''}`, { method: 'POST' }),
   evaluation: () => json('/api/evaluation'),

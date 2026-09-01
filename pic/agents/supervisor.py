@@ -36,7 +36,8 @@ from .action import ActionAgent
 from .base import IncidentContext
 from .decision import DecisionAgent, route_health
 from .detection import DetectionAgent
-from .escalation import EscalationAgent
+from ..schemas import NON_REMEDIAL_ACTIONS
+from .escalation import NON_OVERRIDABLE_RULES, EscalationAgent
 from .impact import ImpactAgent
 from .investigation import InvestigationAgent
 from .root_cause import RootCauseAgent
@@ -57,15 +58,6 @@ PARTIAL_RETRY_GAP = 0.05
 MAX_DIAGNOSIS_RETRIES = 2
 
 _SEVERITY_ORDER = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
-
-# Actions that inform or observe but never change payment behaviour, so there is nothing for the
-# Verification Agent to measure.
-NON_REMEDIAL_ACTIONS = {
-    ActionType.NOTIFY_MERCHANT,
-    ActionType.CREATE_INCIDENT_TICKET,
-    ActionType.SET_MONITORING_FREQUENCY,
-}
-
 
 @dataclass
 class Clock:
@@ -747,6 +739,126 @@ class IncidentSupervisor:
             }
         )
         self._execute_now(incident)
+        return self.run_incident(incident)
+
+    @staticmethod
+    def _refuse_if_owned(incident: IncidentRecord, verb: str) -> None:
+        """A human has this one. Automation does not get to take it back unprompted."""
+        if incident.outcome == "ACKNOWLEDGED_BY_HUMAN":
+            raise ValueError(
+                f"{incident.incident_id} was acknowledged by a person; {verb} would overwrite that "
+                f"record and act on an incident somebody already owns"
+            )
+
+    def acknowledge(
+        self, incident: IncidentRecord, who: str = "human", note: str = ""
+    ) -> IncidentRecord:
+        """A person has taken this on. Record it and take it off the board.
+
+        Not a resolution and not pretending to be one: the fix may belong to a provider, a deploy
+        or another team entirely. What it settles is the question an escalated incident otherwise
+        leaves open forever - whether anybody actually picked it up.
+        """
+        if incident.escalation is None:
+            raise ValueError(f"incident {incident.incident_id} was not handed to a human")
+        self._refuse_if_owned(incident, "acknowledging again")
+        incident.outcome = "ACKNOWLEDGED_BY_HUMAN"
+        incident.escalation = incident.escalation.model_copy(
+            update={
+                "recommended_human_action": (
+                    f"{incident.escalation.recommended_human_action} "
+                    f"| acknowledged by {who}" + (f": {note}" if note else "")
+                ),
+                "next_steps": [],
+            }
+        )
+        if self.emit:
+            self.emit(
+                "acknowledged",
+                {"incident_id": incident.incident_id, "who": who, "note": note},
+            )
+        # An escalated incident is already closed; acknowledging records who owns it now rather
+        # than closing it a second time.
+        if incident.state is not IncidentState.CLOSED:
+            self._step_close(incident)
+        return incident
+
+    def override(
+        self, incident: IncidentRecord, who: str = "human", reason: str = ""
+    ) -> IncidentRecord:
+        """Run the action the policy gateway refused, on a named human's authority.
+
+        The gateway is not bypassed, it is answered: a new decision is recorded carrying the
+        overridden rules and the person who overrode them. Verification and rollback are unchanged,
+        so an override that does not help is still undone.
+        """
+        self._refuse_if_owned(incident, "overriding")
+        decision = incident.policy_decision
+        proposal = incident.proposal
+        if decision is None or proposal is None:
+            raise ValueError(f"incident {incident.incident_id} has no proposed action to override")
+        if decision.approved:
+            raise ValueError(f"incident {incident.incident_id} was not blocked by policy")
+        blocked_by_safety = [r for r in decision.bound_by if r in NON_OVERRIDABLE_RULES]
+        if blocked_by_safety:
+            # Refused here as well as hidden in the UI: a rule that protects against harm should
+            # not be one API call away from being ignored.
+            raise ValueError(
+                f"{', '.join(blocked_by_safety)} cannot be overridden - it exists to prevent the "
+                f"action causing harm, not to express uncertainty"
+            )
+        if not reason.strip():
+            raise ValueError("an override must say why")
+
+        incident.outcome = None
+        incident.attempts = 0
+        incident.policy_decision = decision.model_copy(
+            update={
+                "approved": True,
+                "requires_human": False,
+                "outcome": PolicyOutcome.APPROVE,
+                "approved_by": f"human_override:{who}",
+                "reason": (
+                    f"{decision.reason} | overridden by {who}: {reason}"
+                ),
+            }
+        )
+        if self.emit:
+            self.emit(
+                "overridden",
+                {
+                    "incident_id": incident.incident_id,
+                    "who": who,
+                    "reason": reason,
+                    "rules": decision.bound_by,
+                },
+            )
+        self._execute_now(incident)
+        return self.run_incident(incident)
+
+    def retry(self, incident: IncidentRecord, who: str = "human") -> IncidentRecord:
+        """Look again, now, against the traffic that has arrived since.
+
+        A diagnosis is only ever as good as the window it was made in. An incident that was
+        ambiguous when three minutes of evidence existed is often unambiguous with fifteen, and
+        re-running costs nothing but a detection sweep.
+        """
+        if incident.escalation is None:
+            raise ValueError(f"incident {incident.incident_id} was not handed to a human")
+        self._refuse_if_owned(incident, "retrying")
+        refreshed = self.detector.evaluate(self.clock.now())
+        if refreshed is not None:
+            incident.anomaly = refreshed.model_copy(update={"incident_id": incident.incident_id})
+            incident.severity = refreshed.severity
+            incident.segment_keys = sorted(set(incident.segment_keys) | _segment_keys(refreshed))
+        incident.outcome = None
+        incident.escalation = None
+        incident.proposal = None
+        incident.policy_decision = None
+        incident.verification = None
+        if self.emit:
+            self.emit("retried", {"incident_id": incident.incident_id, "who": who})
+        self._transition(incident, IncidentState.DETECTED)
         return self.run_incident(incident)
 
     def reject(self, incident: IncidentRecord, approver: str = "human") -> IncidentRecord:

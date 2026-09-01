@@ -1,7 +1,7 @@
 import SuccessRateChart from './Chart.jsx'
 import { formatClock, formatINR, formatPct } from './api.js'
 import {
-  ActivityLog, AgentTrace, Card, Empty, ErrorBox, Evidence, HealthBars, Led, Skeleton, Tag, Workflow, confidenceInWords, impactFacts, readableAction, severityTone, statusTone,
+  ActivityLog, AgentTrace, Card, Empty, ErrorBox, Evidence, HealthBars, Led, NextSteps, Skeleton, Tag, Workflow, confidenceInWords, impactFacts, readableAction, severityTone, statusTone,
 } from './components.jsx'
 
 /* Pages. Every figure comes from the API; where the system has not produced something yet the
@@ -13,7 +13,7 @@ const isOpen = (i) => i && i.state !== 'CLOSED'
 
 export function CommandCenter({
   metrics, series, incidents, incident, agents, health, busy, error, notice,
-  selectedId, onSelect, onOpen, onApprove, onReject, onGoto, onRunHeadline,
+  selectedId, onSelect, onOpen, onApprove, onReject, onGoto, onRunHeadline, onStep,
 }) {
   const live = incidents?.find((i) => i.state !== 'CLOSED') || null
   const shown = incidents?.find((i) => i.incident_id === selectedId) || live || incidents?.[0] || null
@@ -65,7 +65,7 @@ export function CommandCenter({
                   : 'Agents are investigating\u2026'}
               </p>
 
-              {matches ? <Result incident={incident} /> : null}
+              {matches ? <Result incident={incident} busy={busy} onStep={onStep} /> : null}
 
               <div className="focus-facts">
                 {impactFacts(matches ? incident : null).map(([k, v]) => (
@@ -141,7 +141,7 @@ function rolledBack(incident) {
   return (incident?.audit || []).some((a) => String(a.approved_by || '').startsWith('policy_engine:rollback'))
 }
 
-function Result({ incident }) {
+function Result({ incident, busy, onStep }) {
   const v = incident.verification
   const executed = (incident.audit || []).filter((a) => !String(a.approved_by || '').startsWith('policy_engine:'))
   const action = executed[0]
@@ -180,6 +180,7 @@ function Result({ incident }) {
           <div className="result-line">
             <span>Do next</span>{incident.escalation.recommended_human_action}
           </div>
+          {onStep ? <NextSteps incident={incident} busy={busy} onStep={onStep} /> : null}
         </>
       ) : null}
       {incident.time_to_mitigate_s != null ? (
@@ -266,7 +267,7 @@ function IncidentBanner({ incident, summary, resolved, busy, onOpen, onApprove, 
 
 /* ============================================================== incidents */
 
-export function Incidents({ incidents, incident, busy, selectedId, onOpen, onApprove, onReject }) {
+export function Incidents({ incidents, incident, busy, selectedId, onOpen, onApprove, onReject, onStep }) {
   if (!incidents?.length) {
     return (
       <>
@@ -314,7 +315,7 @@ export function Incidents({ incidents, incident, busy, selectedId, onOpen, onApp
       </Card>
 
       {summary && incident && incident.incident_id === summary.incident_id ? (
-        <IncidentDetail incident={incident} summary={summary} busy={busy} onApprove={onApprove} onReject={onReject} />
+        <IncidentDetail incident={incident} summary={summary} busy={busy} onApprove={onApprove} onReject={onReject} onStep={onStep} />
       ) : summary ? (
         <Card><Skeleton rows={5} /></Card>
       ) : (
@@ -328,7 +329,7 @@ export function Incidents({ incidents, incident, busy, selectedId, onOpen, onApp
   )
 }
 
-function IncidentDetail({ incident, summary, busy, onApprove, onReject }) {
+function IncidentDetail({ incident, summary, busy, onApprove, onReject, onStep }) {
   const closed = incident.state === 'CLOSED'
   const awaiting = incident.state === 'AWAITING_HUMAN_APPROVAL'
   const reverted = (incident.audit || []).some((a) => String(a.approved_by || '').startsWith('policy_engine:rollback'))
@@ -371,6 +372,18 @@ function IncidentDetail({ incident, summary, busy, onApprove, onReject }) {
           <div key={k}><div className="inc-fact-k">{k}</div><div className="inc-fact-v">{val}</div></div>
         ))}
       </div>
+
+      {incident.escalation ? (
+        <div className="handover">
+          {/* The reason has to sit above the buttons. An operator asked to choose an action
+              before being told what happened is being asked to guess. */}
+          <p className="handover-why">
+            {incident.escalation.because || incident.escalation.reason}
+          </p>
+          <p className="handover-rec">{incident.escalation.recommended_human_action}</p>
+          {onStep ? <NextSteps incident={incident} busy={busy} onStep={onStep} /> : null}
+        </div>
+      ) : null}
 
       <h4 className="wf-heading">Workflow</h4>
       <Workflow incident={incident} />

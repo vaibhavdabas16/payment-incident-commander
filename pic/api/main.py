@@ -644,6 +644,45 @@ async def reject(incident_id: str, approver: str = "operator") -> dict[str, Any]
     return {"incident_id": incident_id, "state": incident.state.value, "outcome": incident.outcome}
 
 
+@app.post("/api/incidents/{incident_id}/acknowledge")
+async def acknowledge(
+    incident_id: str, who: str = "operator", note: str = ""
+) -> dict[str, Any]:
+    """A person has taken this on. Not a resolution — a statement that somebody owns it."""
+    incident = _find(incident_id)
+    try:
+        await asyncio.to_thread(eng().supervisor.acknowledge, incident, who, note)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"incident_id": incident_id, "state": incident.state.value, "outcome": incident.outcome}
+
+
+@app.post("/api/incidents/{incident_id}/override")
+async def override(incident_id: str, who: str = "operator", reason: str = "") -> dict[str, Any]:
+    """Run the action policy refused, on a named person's authority.
+
+    Refused for rules that exist to prevent harm rather than to express uncertainty — the
+    supervisor decides which, so this cannot be widened by calling a different endpoint.
+    """
+    incident = _find(incident_id)
+    try:
+        await asyncio.to_thread(eng().supervisor.override, incident, who, reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"incident_id": incident_id, "state": incident.state.value, "outcome": incident.outcome}
+
+
+@app.post("/api/incidents/{incident_id}/retry")
+async def retry(incident_id: str, who: str = "operator") -> dict[str, Any]:
+    """Look again against the traffic that has arrived since."""
+    incident = _find(incident_id)
+    try:
+        await asyncio.to_thread(eng().supervisor.retry, incident, who)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"incident_id": incident_id, "state": incident.state.value, "outcome": incident.outcome}
+
+
 @app.post("/api/control/{command}")
 def control(command: str, speedup: float | None = None) -> dict[str, Any]:
     if command == "pause":

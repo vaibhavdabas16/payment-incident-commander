@@ -399,6 +399,34 @@ class VerificationResult(BaseModel):
     explanation: str = ""
 
 
+# Actions that inform or observe but never change payment behaviour, so there is nothing for the
+# Verification Agent to measure and nothing for an operator to gain by choosing one over another.
+# Lives here rather than in the supervisor so the escalation agent can use it without importing
+# the thing that imports it.
+NON_REMEDIAL_ACTIONS = {
+    ActionType.NOTIFY_MERCHANT,
+    ActionType.CREATE_INCIDENT_TICKET,
+    ActionType.SET_MONITORING_FREQUENCY,
+    ActionType.NO_ACTION,
+}
+
+
+class NextStep(BaseModel):
+    """One thing a human can do about this incident, from inside the product.
+
+    `action` is the operation to call; everything else is for the person deciding whether to.
+    `consequence` is not decoration - an operator authorising a change to a live payment system is
+    entitled to know what happens next before they click, particularly that an override is still
+    measured and still reverted if it does not help.
+    """
+
+    action: str
+    label: str
+    detail: str
+    consequence: str = ""
+    destructive: bool = False
+
+
 class Escalation(BaseModel):
     incident_id: str
     reason_code: str
@@ -408,6 +436,8 @@ class Escalation(BaseModel):
     because: str = ""
     urgency: Severity
     recommended_human_action: str
+    # What can be done about it, here, now. An escalation with no next step is a dead end.
+    next_steps: list[NextStep] = Field(default_factory=list)
     context_pack: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utcnow)
 

@@ -178,6 +178,35 @@ export default function App() {
     await act(() => api.trigger(scenario.scenario_id))
   }
 
+  /** Run one of the moves a handover offers.
+   *
+   *  The step ids come from the server, so a step the backend does not offer cannot be invoked
+   *  from here by editing the page - the endpoints refuse anything the incident is not in a state
+   *  for, rather than trusting the button that called them.
+   */
+  const runStep = async (step) => {
+    const id = detail?.incident_id || selectedId
+    if (!id) return
+    if (step.action === 'approve') return approve(id)
+    if (step.action === 'reject') return reject(id)
+    if (step.action === 'retry') {
+      setNotice({ kind: 'injected', text: 'Looking again at the traffic since this opened\u2026' })
+      return act(() => api.retryIncident(id))
+    }
+    if (step.action === 'acknowledge') {
+      const note = window.prompt('Who is taking this, and what are you doing about it?', '')
+      if (note === null) return
+      setNotice({ kind: 'reset', text: 'Recorded. The incident stays in the audit trail.' })
+      return act(() => api.acknowledge(id, note))
+    }
+    if (step.action === 'override') {
+      // Required, not optional: an override is a decision somebody answers for.
+      const reason = window.prompt('Why are you overriding the policy? This is recorded.', '')
+      if (!reason) return
+      return act(() => api.override(id, reason))
+    }
+  }
+
   const reset = async () => {
     setNotice({ kind: 'reset', text: 'Cleared every running scenario and incident.' })
     await act(() => api.control('reset'))
@@ -272,10 +301,11 @@ export default function App() {
               selectedId={selectedId}
               onSelect={(id) => { pinned.current = true; setSelectedId(id) }}
               onOpen={open} onApprove={approve} onReject={reject} onGoto={setPage}
+              onStep={runStep}
             />
           ) : null}
           {page === 'incidents' ? (
-            <Incidents {...shared} selectedId={selectedId} onOpen={openInList} onApprove={approve} onReject={reject} />
+            <Incidents {...shared} selectedId={selectedId} onOpen={openInList} onApprove={approve} onReject={reject} onStep={runStep} />
           ) : null}
           {page === 'health' ? <Health health={health} metrics={metrics} series={series} /> : null}
           {page === 'simulate' ? (

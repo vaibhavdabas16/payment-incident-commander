@@ -72,6 +72,9 @@ def _incident_summary(incident: Any) -> dict[str, Any]:
                 "reason": incident.escalation.reason,
                 "because": incident.escalation.because,
                 "recommended_human_action": incident.escalation.recommended_human_action,
+                "next_steps": [
+                    step.model_dump(mode="json") for step in incident.escalation.next_steps
+                ],
             }
             if incident.escalation
             else None
@@ -144,6 +147,55 @@ async def reject_incident(
     return _incident_summary(incident)
 
 
+@router.post("/incidents/{incident_id}/acknowledge")
+async def acknowledge_incident(
+    incident_id: str, request: Request, authorization: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Record that a person has taken this on, with a note, and take it off the board."""
+    tenant = _tenant(authorization)
+    body = await _json(request)
+    incident = _find(tenant, incident_id)
+    try:
+        tenant.engine.supervisor.acknowledge(
+            incident, who=str(body.get("who") or "api"), note=str(body.get("note") or "")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _incident_summary(incident)
+
+
+@router.post("/incidents/{incident_id}/override")
+async def override_incident(
+    incident_id: str, request: Request, authorization: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Run the action policy refused. Requires a reason, and records who authorised it."""
+    tenant = _tenant(authorization)
+    body = await _json(request)
+    incident = _find(tenant, incident_id)
+    try:
+        tenant.engine.supervisor.override(
+            incident, who=str(body.get("who") or "api"), reason=str(body.get("reason") or "")
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _incident_summary(incident)
+
+
+@router.post("/incidents/{incident_id}/retry")
+async def retry_incident(
+    incident_id: str, request: Request, authorization: str | None = Header(default=None)
+) -> dict[str, Any]:
+    """Re-run detection and diagnosis against the traffic since this incident opened."""
+    tenant = _tenant(authorization)
+    body = await _json(request)
+    incident = _find(tenant, incident_id)
+    try:
+        tenant.engine.supervisor.retry(incident, who=str(body.get("who") or "api"))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _incident_summary(incident)
+
+
 @router.get("/status")
 async def status(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     """What this deployment currently knows about your traffic.
@@ -156,6 +208,13 @@ async def status(authorization: str | None = Header(default=None)) -> dict[str, 
     payload = tenant.status()
     payload["metrics"] = tenant.engine.current_metrics()
     return payload
+
+
+def _find(tenant: Tenant, incident_id: str):
+    for incident in tenant.engine.incidents():
+        if incident.incident_id == incident_id:
+            return incident
+    raise HTTPException(status_code=404, detail=f"no incident {incident_id}")
 
 
 def _find_awaiting(tenant: Tenant, incident_id: str):

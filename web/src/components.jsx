@@ -454,6 +454,38 @@ export function ActivityLog({ incident }) {
   )
 }
 
+/** The moves available on a handed-over incident.
+ *
+ *  An escalation used to end with advice and a closed incident, which reads as finished when the
+ *  work has barely started. These are the same options the API exposes, rendered where the person
+ *  who needs them is already looking.
+ */
+export function NextSteps({ incident, busy, onStep }) {
+  const steps = incident?.escalation?.next_steps || []
+  if (!steps.length) return null
+  return (
+    <div className="steps">
+      <div className="steps-label">What now</div>
+      {steps.map((step) => (
+        <div key={step.action} className="step">
+          <div className="step-text">
+            <b>{step.label}</b>
+            <span>{step.detail}</span>
+            {step.consequence ? <i>{step.consequence}</i> : null}
+          </div>
+          <button
+            className={`btn ${step.destructive ? 'primary' : ''}`}
+            disabled={busy}
+            onClick={() => onStep(step)}
+          >
+            {step.destructive ? 'Run it' : 'Do it'}
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /* --------------------------------------------------------------- feed */
 
 export function EventFeed({ events }) {
