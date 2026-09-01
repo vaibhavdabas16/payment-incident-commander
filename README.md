@@ -34,9 +34,14 @@ isolated world — your incidents are yours alone.
 5. **It reports that the fix did not help, reverts its own change, and hands over.** The handover
    says what it tried and what it measured — not a category like "no effective action", but the
    action, the two success rates it compared, and the one thing a human should do next.
+6. **Then it gives you something to press.** *Look again now* re-runs the diagnosis against the
+   traffic that has arrived since. *I have this* records who took it and takes it off the board.
+   Where policy refused an action out of uncertainty rather than danger, *Run it anyway* is there
+   too — and it still measures the result and still reverts itself if it did not help.
 
-That last step is the point of the project. Acting is easy; noticing that the action did not help,
-undoing it, and saying so is the hard part.
+Steps 5 and 6 are the point of the project. Acting is easy; noticing the action did not help,
+undoing it, saying so, and leaving the person who has to finish the job something better than a
+paragraph of advice is the hard part.
 
 > The free tier sleeps after ~15 minutes idle, so the first request may take up to a minute to wake
 > it. Run it on the deterministic reasoner (the default) — it is what the benchmark uses and an
@@ -190,6 +195,19 @@ shadow of the first. You can see this in the investigation output:
   declining its own cards, and the system does not pretend otherwise.
 - A **failed intervention** is reverted from a recorded inverse and escalated, rather than retried
   into the ground. Demo scenario 2 exists specifically to show this.
+- A **handover ends in options, not advice.** Every escalation carries the moves available on that
+  specific incident — approve, reject, override, try an alternative that was costed and not picked,
+  look again, or take ownership with a note — and each is an operation the supervisor implements
+  and both APIs expose. An escalation that ends with "contact the provider" and a closed incident
+  reads as finished when the work has barely started.
+
+Overriding is worth being precise about, because "the model cannot execute anything" has to survive
+it. Only a person can call it, they must give a reason, the decision records who authorised it and
+which rules they overrode, and the action is still verified against a control group and still
+reverted if it did not help. And it is offered only for rules that express *uncertainty* —
+confidence, expected value, risk appetite. Rules that say the action is unsafe or forbidden
+(`routing`, `capability`, `rate_limit`) cannot be overridden at all: no authority makes moving
+payments onto an already-broken route a good idea, and both the button and the endpoint refuse.
 
 ---
 
@@ -337,6 +355,8 @@ pic/
   agents/             detection, investigation, impact, root_cause, decision,
                       action, verification, escalation, supervisor (FSM)
   policies/           merchant_policies.yaml + the deterministic gateway
+                      (rule ids are `family:name`; the families a human may override are
+                      decided in agents/escalation.py, not here)
   tools/              registry, read tools, write tools
   llm/                Reasoner interface, Gemini client, deterministic fallback
   memory/             incident memory + deterministic similarity retrieval
