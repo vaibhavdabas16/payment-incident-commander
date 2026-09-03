@@ -34,40 +34,6 @@ export function Card({ title, sub, right, children, flush = false }) {
   )
 }
 
-/** A sparkline drawn by hand: no chart library for a 130px trend. */
-export function Sparkline({ points, tone = 'info', width = 150, height = 26 }) {
-  const values = (points || []).filter((p) => p.transactions > 0).slice(-30).map((p) => p.success_rate)
-  if (values.length < 2) return null
-  const lo = Math.min(...values)
-  const hi = Math.max(...values)
-  const span = hi - lo || 1
-  const step = width / (values.length - 1)
-  const y = (v) => height - 2 - ((v - lo) / span) * (height - 4)
-  const d = values.map((v, i) => `${i ? 'L' : 'M'}${(i * step).toFixed(1)},${y(v).toFixed(1)}`).join(' ')
-  const stroke = { ok: 'var(--ok)', crit: 'var(--crit)', info: 'var(--info)' }[tone] || 'var(--info)'
-  return (
-    <svg className="metric-spark" width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-      <path d={d} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-export function Metric({ label, value, delta, deltaTone, spark, sparkTone }) {
-  return (
-    <div className="metric">
-      <span className="metric-k">{label}</span>
-      <span className="metric-v">{value}</span>
-      {delta ? (
-        <span className={`metric-d ${deltaTone || ''}`}>
-          {deltaTone ? <Led tone={deltaTone === 'up' ? 'ok' : 'crit'} /> : null}
-          {delta}
-        </span>
-      ) : null}
-      {spark ? <Sparkline points={spark} tone={sparkTone} /> : null}
-    </div>
-  )
-}
-
 /* ------------------------------------------------------------------ states */
 
 export function Empty({ title, body, facts }) {
@@ -238,32 +204,6 @@ export function Hypotheses({ rootCause }) {
     </div>
   )
 }
-
-export function Evidence({ incident }) {
-  const rc = incident?.root_cause
-  const findings = incident?.evidence?.findings || []
-  const cited = new Set((rc?.supporting_evidence || []).map(String))
-  const supporting = findings.filter((f) => cited.has(String(f.finding_id))).slice(0, 5)
-  const rows = supporting.length ? supporting : findings.slice(0, 5)
-  if (!rows.length) return <Skeleton rows={3} />
-  return (
-    <div className="ev">
-      {rows.map((f) => (
-        <div className="ev-item" key={f.finding_id}>
-          <span className="ev-tick">✓</span>
-          <span>{f.statement}</span>
-        </div>
-      ))}
-      {(rc?.contradicting_evidence || []).slice(0, 2).map((c, i) => (
-        <div className="ev-item against" key={`c${i}`}>
-          <span className="ev-tick">✕</span>
-          <span>{c}</span>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 
 /* ---------------------------------------------------------------- workflow */
 
@@ -484,42 +424,6 @@ export function NextSteps({ incident, busy, onStep }) {
       ))}
     </div>
   )
-}
-
-/* --------------------------------------------------------------- feed */
-
-export function EventFeed({ events }) {
-  if (!events?.length) return <div className="empty" style={{ padding: '28px 12px' }}><p>Waiting for agent activity…</p></div>
-  return (
-    <ul className="feed" aria-live="polite" aria-relevant="additions">
-      {events.map((e, i) => (
-        <li key={i}>
-          <span className="f-time">{e._at ? formatClock(e._at) : ''}</span>
-          <span className="f-kind">{e.kind}</span>
-          <span className="f-text">{describeEvent(e)}</span>
-        </li>
-      ))}
-    </ul>
-  )
-}
-
-export function describeEvent(e) {
-  switch (e.kind) {
-    case 'agent_finished': return `${e.agent}: ${e.summary || (e.ok ? 'done' : 'failed')}`
-    case 'agent_started': return `${e.agent} started`
-    case 'state_changed': return `${e.incident_id}: ${e.from} → ${e.to}`
-    case 'incident_opened': return `${e.incident_id} opened — ${e.title}`
-    case 'incident_closed': return `${e.incident_id} closed — ${e.outcome}`
-    case 'policy_decision': return `${e.action}: ${e.outcome}${e.reason ? ` — ${e.reason}` : ''}`
-    case 'approval_required': return `${e.incident_id}: ${e.action} needs approval — ${e.reason}`
-    case 'verification': return `${e.status} (${formatPct(e.before_success_rate)} → ${formatPct(e.after_success_rate)})`
-    case 'audit': return `${e.action} ${e.execution_result} (approved by ${e.approved_by})`
-    case 'escalated': return `${e.incident_id} escalated — ${e.reason}`
-    case 'diagnosis_revised': return `${e.incident_id}: diagnosis revised ${e.from} → ${e.to}`
-    case 'rollback': return e.summary
-    case 'scenario_triggered': return e.name
-    default: return e.summary || e.reason || ''
-  }
 }
 
 /* ------------------------------------------------------------- formatting */

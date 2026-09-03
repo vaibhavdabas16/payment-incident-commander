@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .agents.supervisor import Clock, IncidentSupervisor
-from .config import settings
 from .detection.detector import Detector
 from .llm.base import build_reasoner
 from .memory.store import IncidentMemory

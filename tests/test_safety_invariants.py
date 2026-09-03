@@ -516,7 +516,6 @@ def test_a_handover_offers_something_a_human_can_actually_do():
     Every handover now carries the moves available on that specific incident, and every one of them
     is an operation the supervisor implements.
     """
-    from pic.schemas import IncidentState
     engine, incident = _handed_over()
     steps = incident.escalation.next_steps
     assert steps, "a handover must offer a next move"
@@ -539,7 +538,6 @@ def test_a_handover_offers_something_a_human_can_actually_do():
 
 def test_acknowledging_records_who_took_it():
     """Not a resolution - a statement that somebody owns it, which is what was missing."""
-    from pic.schemas import IncidentState
     engine, incident = _handed_over()
     engine.supervisor.acknowledge(incident, who="ops@acme.example", note="raised with PSP support")
 

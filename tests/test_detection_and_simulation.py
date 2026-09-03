@@ -16,6 +16,7 @@ from pic.detection.statistics import (
     robust_z,
     two_proportion_ztest,
 )
+from pic.schemas import Segment
 from pic.simulation.generator import PaymentSimulator
 from pic.simulation.scenarios import SCENARIOS, get_scenario
 from pic.store import EventStore, wilson_lower_bound
@@ -236,3 +237,134 @@ def test_baseline_freeze_stops_an_outage_becoming_the_new_normal():
     still_frozen = detector.baseline(sim.now).ewma_baseline
     assert abs(still_frozen - frozen) < 0.03, "baseline drifted despite the incident being open"
     assert still_frozen > 0.88, "baseline should still reflect healthy behaviour"
+
+
+# --------------------------------------------------------------------------
+# Aggregation
+#
+# `segment_stats`, `cross_segment_stats`, `union_metric_window` and `success_rate_series` are the
+# query surface every tool and the detector read through, and they accumulate counters in a single
+# pass rather than collecting each bucket's events and walking them again per statistic. That is
+# worth roughly half the cost of a detection sweep and is invisible until it is wrong, so the
+# arithmetic is pinned here against a deliberately naive count over the same events.
+# --------------------------------------------------------------------------
+
+
+def _naive(rows, predicate):
+    """(total, successes, failures, failed amount) over the rows a predicate accepts."""
+    matched = [e for e in rows if predicate(e)]
+    successes = sum(1 for e in matched if e.status == "success")
+    return (
+        len(matched),
+        successes,
+        len(matched) - successes,
+        sum(e.amount_paise for e in matched if e.status == "failed"),
+    )
+
+
+def test_segment_stats_counts_match_a_naive_count(warm):
+    store, sim = warm
+    end = sim.now
+    start = end - timedelta(minutes=10)
+    rows = store.slice(start, end)
+
+    seen = 0
+    for stat in store.segment_stats(start, end, "psp", min_volume=1):
+        value = stat.segment.dimensions["psp"]
+        total, successes, failures, failed_amount = _naive(rows, lambda e: e.psp == value)
+        assert (stat.total, stat.successes, stat.failures) == (total, successes, failures)
+        assert stat.amount_at_risk_paise == failed_amount
+        assert stat.success_rate == pytest.approx(successes / total)
+        seen += total
+    assert seen == len(rows), "every event belongs to exactly one psp bucket"
+
+
+def test_segment_stats_baseline_deviation_uses_the_segments_own_baseline(warm):
+    store, sim = warm
+    end = sim.now
+    start = end - timedelta(minutes=5)
+    b_end, b_start = start, start - timedelta(minutes=20)
+    base_rows = store.slice(b_start, b_end)
+
+    for stat in store.segment_stats(start, end, "issuer", b_start, b_end, min_volume=1):
+        value = stat.segment.dimensions["issuer"]
+        b_total, b_ok, _f, _a = _naive(base_rows, lambda e: e.issuer == value)
+        assert (stat.baseline_total, stat.baseline_successes) == (b_total, b_ok)
+        assert stat.baseline_success_rate == pytest.approx(b_ok / b_total)
+        assert stat.deviation == pytest.approx(stat.success_rate - stat.baseline_success_rate)
+
+
+def test_segment_stats_exclude_removes_that_segments_traffic(warm):
+    """The residual test in the Investigation Agent depends on this being an exact removal."""
+    store, sim = warm
+    end = sim.now
+    start = end - timedelta(minutes=10)
+    rows = store.slice(start, end)
+    excluded = Segment(dimensions={"payment_method": "upi"})
+
+    for stat in store.segment_stats(start, end, "psp", min_volume=1, exclude=excluded):
+        value = stat.segment.dimensions["psp"]
+        total, successes, _f, _a = _naive(
+            rows, lambda e: e.psp == value and e.payment_method != "upi"
+        )
+        assert (stat.total, stat.successes) == (total, successes)
+
+
+def test_cross_segment_stats_counts_match_a_naive_count(warm):
+    store, sim = warm
+    end = sim.now
+    start = end - timedelta(minutes=10)
+    rows = store.slice(start, end)
+
+    for stat in store.cross_segment_stats(start, end, ("payment_method", "psp"), min_volume=1):
+        method = stat.segment.dimensions["payment_method"]
+        psp = stat.segment.dimensions["psp"]
+        total, successes, failures, failed_amount = _naive(
+            rows, lambda e: e.payment_method == method and e.psp == psp
+        )
+        assert (stat.total, stat.successes, stat.failures) == (total, successes, failures)
+        assert stat.amount_at_risk_paise == failed_amount
+
+
+def test_union_counts_overlapping_segments_once(warm):
+    """Summing per-segment windows double-counts wherever two segments describe one payment."""
+    store, sim = warm
+    end = sim.now
+    start = end - timedelta(minutes=10)
+    rows = store.slice(start, end)
+    method = Segment(dimensions={"payment_method": "upi"})
+    psp = Segment(dimensions={"psp": store.slice(start, end)[0].psp})
+
+    window = store.union_metric_window(start, end, [method, psp])
+    total, successes, _f, failed_amount = _naive(
+        rows,
+        lambda e: e.payment_method == method.dimensions["payment_method"]
+        or e.psp == psp.dimensions["psp"],
+    )
+    assert (window.total, window.successes) == (total, successes)
+    assert window.failed_gmv_paise == failed_amount
+
+    separately = store.metric_window(start, end, {"payment_method": "upi"}).total
+    separately += store.metric_window(start, end, {"psp": psp.dimensions["psp"]}).total
+    assert window.total < separately, "the segments overlap, so the union must be smaller"
+
+
+def test_success_rate_series_agrees_with_metric_window(warm):
+    """The series takes a light path; it must not diverge from the full aggregate it stands in for."""
+    store, sim = warm
+    end = sim.now
+    windows = store.success_rate_series(end, window_seconds=60, count=12)
+    assert len(windows) == 12
+    for window in windows:
+        full = store.metric_window(window.start, window.end)
+        assert (window.total, window.successes, window.failures) == (
+            full.total,
+            full.successes,
+            full.failures,
+        )
+        assert window.success_rate == pytest.approx(full.success_rate)
+        assert (window.gmv_paise, window.failed_gmv_paise) == (
+            full.gmv_paise,
+            full.failed_gmv_paise,
+        )
+    assert [w.start for w in windows] == sorted(w.start for w in windows), "oldest first"

@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import bisect
 import math
-from collections import Counter, defaultdict
+from collections import Counter
+from operator import attrgetter
 from datetime import datetime, timedelta
-from typing import Iterable, Sequence
+from typing import Any, Iterable, Sequence
 
 from .config import settings
 from .schemas import ConfigChange, MetricWindow, PaymentEvent, Segment, SegmentStat
@@ -22,8 +23,94 @@ def _epoch(ts: datetime) -> float:
     return ts.timestamp()
 
 
+# `attrgetter` is built once per dimension tuple and reused. A segment match runs once per event
+# per candidate segment inside `union_metric_window`, which is the innermost loop of the detection
+# sweep, and rebuilding the getter there dominated the comparison it was doing.
+_GETTER_CACHE: dict[tuple[str, ...], Any] = {}
+
+
+def _getter(keys: tuple[str, ...]):
+    getter = _GETTER_CACHE.get(keys)
+    if getter is None:
+        # attrgetter returns a bare value for one key and a tuple for several; the single-key case
+        # is wrapped so every caller can treat the result as a tuple.
+        raw = attrgetter(*keys)
+        getter = (lambda e, _raw=raw: (_raw(e),)) if len(keys) == 1 else raw
+        _GETTER_CACHE[keys] = getter
+    return getter
+
+
+def _segment_probe(segment: Segment) -> tuple[Any, tuple[str, ...]]:
+    """A segment as (getter, expected values), so matching is one call and one tuple compare."""
+    keys = tuple(segment.dimensions)
+    return _getter(keys), tuple(str(v) for v in segment.dimensions.values())
+
+
 def _matches(event: PaymentEvent, segment: Segment) -> bool:
-    return all(str(getattr(event, k, None)) == v for k, v in segment.dimensions.items())
+    getter, expected = _segment_probe(segment)
+    return tuple(map(str, getter(event))) == expected
+
+
+def _without(rows: list[PaymentEvent], segment: Segment) -> list[PaymentEvent]:
+    """`rows` with one segment's traffic removed, matching each event exactly once."""
+    getter, expected = _segment_probe(segment)
+    return [e for e in rows if tuple(map(str, getter(e))) != expected]
+
+
+# (total, successes, failures, failed amount in paise) per bucket. Four integers is everything a
+# `SegmentStat` needs from the events in it, so the events themselves are never retained.
+_Tally = tuple[int, int, int, int]
+
+
+def _tally(rows: Iterable[PaymentEvent], dimension: str) -> dict[str, _Tally]:
+    """Group by one dimension, accumulating counters in a single pass.
+
+    Bucketing on the raw attribute and stringifying once per distinct value at the end, rather
+    than once per event: a dimension has a handful of values and the window has hundreds of
+    thousands of events. `status` is `success | failed`, so anything not a success is a failure.
+
+    This relies on every sliceable dimension being declared `str` on `PaymentEvent` — two raw
+    values that stringify alike would be counted apart and then collide in the returned dict. The
+    numeric fields (amount, latency, retry count) are not dimensions and are never passed here.
+    """
+    out: dict[Any, list[int]] = {}
+    get = attrgetter(dimension)
+    for e in rows:
+        value = get(e)
+        if value is None:
+            continue
+        cell = out.get(value)
+        if cell is None:
+            cell = out[value] = [0, 0, 0, 0]
+        cell[0] += 1
+        if e.status == "success":
+            cell[1] += 1
+        else:
+            cell[2] += 1
+            cell[3] += e.amount_paise
+    return {str(k): (c[0], c[1], c[2], c[3]) for k, c in out.items()}
+
+
+def _tally_cross(
+    rows: Iterable[PaymentEvent], dimensions: Sequence[str]
+) -> dict[tuple[str, ...], _Tally]:
+    """`_tally` over a joint key, e.g. (payment_method, psp)."""
+    out: dict[tuple[Any, ...], list[int]] = {}
+    get = _getter(tuple(dimensions))
+    for e in rows:
+        key = get(e)
+        if None in key:
+            continue
+        cell = out.get(key)
+        if cell is None:
+            cell = out[key] = [0, 0, 0, 0]
+        cell[0] += 1
+        if e.status == "success":
+            cell[1] += 1
+        else:
+            cell[2] += 1
+            cell[3] += e.amount_paise
+    return {tuple(map(str, k)): (c[0], c[1], c[2], c[3]) for k, c in out.items()}
 
 
 def wilson_lower_bound(successes: int, total: int, z: float = 1.96) -> float:
@@ -187,13 +274,41 @@ class EventStore:
         count: int,
         filters: dict[str, str] | None = None,
     ) -> list[MetricWindow]:
-        """The `count` most recent consecutive windows ending at `end`, oldest first."""
+        """The `count` most recent consecutive windows ending at `end`, oldest first.
+
+        Rate, volume and GMV only. `metric_window` additionally sorts every latency in the window
+        to take a p95 and counts every error code, and no caller of this method reads either — but
+        the detector asks for 120 consecutive windows on every sweep to build its baseline, so
+        that discarded work was the single most expensive thing detection did.
+        """
         out: list[MetricWindow] = []
         step = timedelta(seconds=window_seconds)
         cursor_end = end
         for _ in range(count):
             cursor_start = cursor_end - step
-            out.append(self.metric_window(cursor_start, cursor_end, filters))
+            rows = self.filtered(cursor_start, cursor_end, filters)
+            total = len(rows)
+            successes = 0
+            gmv = 0
+            failed_gmv = 0
+            for e in rows:
+                if e.status == "success":
+                    successes += 1
+                    gmv += e.amount_paise
+                elif e.status == "failed":
+                    failed_gmv += e.amount_paise
+            out.append(
+                MetricWindow(
+                    start=cursor_start,
+                    end=cursor_end,
+                    total=total,
+                    successes=successes,
+                    failures=total - successes,
+                    success_rate=(successes / total) if total else 0.0,
+                    gmv_paise=gmv,
+                    failed_gmv_paise=failed_gmv,
+                )
+            )
             cursor_end = cursor_start
         return list(reversed(out))
 
@@ -216,42 +331,31 @@ class EventStore:
         min_volume = min_volume if min_volume is not None else settings.detection.min_segment_volume
         rows = self.slice(start, end)
         if exclude is not None:
-            rows = [e for e in rows if not _matches(e, exclude)]
+            rows = _without(rows, exclude)
+
+        # One pass, accumulating counters rather than collecting each bucket's events and walking
+        # them again per statistic. The lists were the expensive part: at four hours of retention
+        # this method was appending well over a million events into per-value buckets on every
+        # detection sweep, only to reduce each bucket to four integers.
+        buckets = _tally(rows, dimension)
         total_all = len(rows)
-        total_failures = sum(1 for e in rows if e.status == "failed")
+        total_failures = sum(b[2] for b in buckets.values())
 
-        buckets: dict[str, list[PaymentEvent]] = defaultdict(list)
-        for e in rows:
-            value = getattr(e, dimension, None)
-            if value is None:
-                continue
-            buckets[str(value)].append(e)
-
-        baseline_rate: dict[str, float] = {}
         baseline_counts: dict[str, tuple[int, int]] = {}
+        baseline_rate: dict[str, float] = {}
         if baseline_start and baseline_end:
             base_rows = self.slice(baseline_start, baseline_end)
             if exclude is not None:
-                base_rows = [e for e in base_rows if not _matches(e, exclude)]
-            base_buckets: dict[str, list[PaymentEvent]] = defaultdict(list)
-            for e in base_rows:
-                value = getattr(e, dimension, None)
-                if value is None:
-                    continue
-                base_buckets[str(value)].append(e)
-            for value, items in base_buckets.items():
-                if items:
-                    ok = sum(1 for i in items if i.status == "success")
-                    baseline_rate[value] = ok / len(items)
-                    baseline_counts[value] = (len(items), ok)
+                base_rows = _without(base_rows, exclude)
+            for value, (b_total, b_ok, _b_failed, _b_amount) in _tally(base_rows, dimension).items():
+                if b_total:
+                    baseline_counts[value] = (b_total, b_ok)
+                    baseline_rate[value] = b_ok / b_total
 
         stats: list[SegmentStat] = []
-        for value, items in buckets.items():
-            total = len(items)
+        for value, (total, successes, failures, failed_amount) in buckets.items():
             if total < min_volume:
                 continue
-            successes = sum(1 for i in items if i.status == "success")
-            failures = total - successes
             rate = successes / total
             base = baseline_rate.get(value)
             b_total, b_ok = baseline_counts.get(value, (0, 0))
@@ -269,7 +373,7 @@ class EventStore:
                     failure_share=(failures / total_failures) if total_failures else 0.0,
                     traffic_share=(total / total_all) if total_all else 0.0,
                     failure_rate_lower_bound=wilson_lower_bound(failures, total),
-                    amount_at_risk_paise=sum(i.amount_paise for i in items if i.status == "failed"),
+                    amount_at_risk_paise=failed_amount,
                 )
             )
         stats.sort(key=lambda s: (s.failure_rate_lower_bound, s.failure_share), reverse=True)
@@ -291,45 +395,24 @@ class EventStore:
         min_volume = min_volume if min_volume is not None else settings.detection.min_segment_volume
         rows = self.slice(start, end)
         total_all = len(rows)
-        total_failures = sum(1 for e in rows if e.status == "failed")
+        buckets = _tally_cross(rows, dimensions)
+        total_failures = sum(b[2] for b in buckets.values())
 
-        def key_of(e: PaymentEvent) -> tuple[str, ...] | None:
-            vals = []
-            for d in dimensions:
-                v = getattr(e, d, None)
-                if v is None:
-                    return None
-                vals.append(str(v))
-            return tuple(vals)
-
-        buckets: dict[tuple[str, ...], list[PaymentEvent]] = defaultdict(list)
-        for e in rows:
-            k = key_of(e)
-            if k is not None:
-                buckets[k].append(e)
-
-        base_buckets: dict[tuple[str, ...], list[PaymentEvent]] = defaultdict(list)
+        base_buckets: dict[tuple[str, ...], _Tally] = {}
         if baseline_start and baseline_end:
-            for e in self.slice(baseline_start, baseline_end):
-                k = key_of(e)
-                if k is not None:
-                    base_buckets[k].append(e)
+            base_buckets = _tally_cross(self.slice(baseline_start, baseline_end), dimensions)
 
         stats: list[SegmentStat] = []
-        for k, items in buckets.items():
-            total = len(items)
+        for k, (total, successes, failures, failed_amount) in buckets.items():
             if total < min_volume:
                 continue
-            successes = sum(1 for i in items if i.status == "success")
-            failures = total - successes
             rate = successes / total
-            base_items = base_buckets.get(k, [])
-            b_ok = sum(1 for i in base_items if i.status == "success")
-            base = (b_ok / len(base_items)) if base_items else None
+            b_total, b_ok, _b_failures, _b_amount = base_buckets.get(k, (0, 0, 0, 0))
+            base = (b_ok / b_total) if b_total else None
             stats.append(
                 SegmentStat(
                     segment=Segment(dimensions=dict(zip(dimensions, k))),
-                    baseline_total=len(base_items),
+                    baseline_total=b_total,
                     baseline_successes=b_ok,
                     total=total,
                     successes=successes,
@@ -340,7 +423,7 @@ class EventStore:
                     failure_share=(failures / total_failures) if total_failures else 0.0,
                     traffic_share=(total / total_all) if total_all else 0.0,
                     failure_rate_lower_bound=wilson_lower_bound(failures, total),
-                    amount_at_risk_paise=sum(i.amount_paise for i in items if i.status == "failed"),
+                    amount_at_risk_paise=failed_amount,
                 )
             )
         stats.sort(key=lambda s: (s.failure_rate_lower_bound, s.failure_share), reverse=True)
@@ -355,12 +438,23 @@ class EventStore:
         do, since `psp=psp_axis` and `route_id=route_A` often describe the same transactions. The
         union is the only way to get an unbiased total.
         """
-        rows = self.slice(start, end)
-        matched = [e for e in rows if any(_matches(e, seg) for seg in segments)]
-        total = len(matched)
-        successes = sum(1 for e in matched if e.status == "success")
-        gmv = sum(e.amount_paise for e in matched if e.status == "success")
-        failed_gmv = sum(e.amount_paise for e in matched if e.status == "failed")
+        # The probes are built once rather than per event per segment, and the counters accumulate
+        # in the same pass that matches — this is the innermost loop of revenue estimation, which
+        # runs over every event in the window for each candidate segment.
+        probes = [_segment_probe(seg) for seg in segments]
+        total = successes = gmv = failed_gmv = 0
+        for e in self.slice(start, end):
+            for getter, expected in probes:
+                if tuple(map(str, getter(e))) == expected:
+                    break
+            else:
+                continue
+            total += 1
+            if e.status == "success":
+                successes += 1
+                gmv += e.amount_paise
+            elif e.status == "failed":
+                failed_gmv += e.amount_paise
         return MetricWindow(
             start=start,
             end=end,

@@ -7,6 +7,10 @@ import Mark from './Mark.jsx'
 import Simulate from './Simulate.jsx'
 
 const POLL_MS = 1500
+// Segment health is a five-minute window, so refetching it on the live cadence redrew identical
+// bars while re-scanning five minutes of events per payment method, provider and issuer on the
+// server — comfortably the most expensive request the dashboard made, for no visible difference.
+const HEALTH_POLL_MS = 6000
 
 const NAV = [
   ['command', 'Overview', 'ico-grid'],
@@ -56,7 +60,6 @@ export default function App() {
   const [agents, setAgents] = useState([])
   const [health, setHealth] = useState(null)
   const [simOptions, setSimOptions] = useState(null)
-  const [events, setEvents] = useState([])
   const [evaluation, setEvaluation] = useState(null)
   const [status, setStatus] = useState('connecting')
   const [busy, setBusy] = useState(false)
@@ -71,31 +74,20 @@ export default function App() {
 
   /* ---------------------------------------------------------- live stream */
 
-  useEffect(() => {
-    const close = connectStream(
-      (event) => {
-        if (event.kind === 'replay') {
-          setEvents((event.events || []).slice(-80).reverse())
-          return
-        }
-        setEvents((prev) => [event, ...prev].slice(0, 80))
-      },
-      (s) => setStatus(s),
-    )
-    return close
-  }, [])
+  /* The socket is what makes the header honest about whether the page is still connected to a
+   * running world. Its payloads used to feed an activity feed that no page renders any more, so
+   * they are read and dropped; the per-incident step trace shows the same work, sourced from the
+   * incident record rather than from a buffer that a reconnect would lose. */
+  useEffect(() => connectStream(() => {}, setStatus), [])
 
   /* -------------------------------------------------------------- polling */
 
   const refresh = useCallback(async () => {
     try {
-      const [m, s, i, h] = await Promise.all([
-        api.metrics(), api.series(60, 45), api.incidents(), api.health().catch(() => null),
-      ])
+      const [m, s, i] = await Promise.all([api.metrics(), api.series(60, 45), api.incidents()])
       setMetrics(m)
       setSeries(s.points)
       setIncidents(i.incidents)
-      if (h) setHealth(h)
       setError(null)
       if (!pinned.current && i.incidents.length) {
         setSelectedId((current) => current ?? i.incidents[0].incident_id)
@@ -110,6 +102,13 @@ export default function App() {
     const timer = setInterval(refresh, POLL_MS)
     return () => clearInterval(timer)
   }, [refresh])
+
+  useEffect(() => {
+    const load = () => api.health().then(setHealth).catch(() => {})
+    load()
+    const timer = setInterval(load, HEALTH_POLL_MS)
+    return () => clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     api.scenarios().then((d) => setScenarios(d.scenarios)).catch(() => {})
@@ -242,7 +241,7 @@ export default function App() {
   }
 
   const live = incidents.find((i) => i.state !== 'CLOSED') || null
-  const shared = { metrics, series, incidents, incident: detail, agents, health, events, scenarios, busy, notice, error }
+  const shared = { metrics, series, incidents, incident: detail, agents, health, scenarios, busy, notice, error }
 
   return (
     <div className={`shell ${collapsed ? 'collapsed' : ''}`}>
