@@ -2,13 +2,11 @@ import { Fragment } from 'react'
 import SuccessRateChart from './Chart.jsx'
 import { formatClock, formatINR, formatPct } from './api.js'
 import {
-  ActivityLog, AgentTrace, Card, Empty, ErrorBox, Evidence, HealthBars, Led, NextSteps, Skeleton, Tag, Workflow, confidenceInWords, impactFacts, readableAction, severityTone, statusTone,
+  ActivityLog, AgentTrace, Card, Empty, ErrorBox, HealthBars, Led, NextSteps, Skeleton, Tag, Workflow, confidenceInWords, impactFacts, readableAction, severityTone, statusTone,
 } from './components.jsx'
 
 /* Pages. Every figure comes from the API; where the system has not produced something yet the
  * page says so rather than filling the space. */
-
-const isOpen = (i) => i && i.state !== 'CLOSED'
 
 /* =========================================================== command centre */
 
@@ -210,57 +208,6 @@ function HealthChips({ groups }) {
           </div>
         </div>
       ))}
-    </div>
-  )
-}
-
-function IncidentBanner({ incident, summary, resolved, busy, onOpen, onApprove, onReject, onGoto }) {
-  const awaiting = incident?.state === 'AWAITING_HUMAN_APPROVAL'
-  const rc = incident?.root_cause
-  const tone = resolved ? 'ok' : awaiting ? 'warn' : summary.severity === 'CRITICAL' ? '' : 'warn'
-  return (
-    <div className={`inc-banner ${tone}`}>
-      <div className="inc-top">
-        <Tag tone={resolved ? 'ok' : severityTone(summary.severity)}>
-          {resolved ? ((summary.outcome || 'closed').replace(/_/g, ' ').toLowerCase()) : `${summary.severity} incident`}
-        </Tag>
-        <span className="inc-title">{summary.title}</span>
-        <span className="pill mono">{summary.incident_id}</span>
-        {incident ? (
-          <span className="pill">
-            <Led tone={resolved ? 'ok' : awaiting ? 'warn' : 'agent'} live={!resolved} />
-            {incident.state.replace(/_/g, ' ').toLowerCase()}
-          </span>
-        ) : null}
-      </div>
-
-      {rc ? (
-        <p style={{ fontSize: 13.5, color: 'var(--text-2)', maxWidth: '80ch' }}>
-          {rc.most_likely_root_cause}. {confidenceInWords(rc.confidence)}.
-        </p>
-      ) : (
-        <p style={{ fontSize: 13.5, color: 'var(--text-2)' }}>Agents are investigating…</p>
-      )}
-
-      <div className="inc-facts">
-        {impactFacts(incident).map(([k, v]) => (
-          <div key={k}>
-            <div className="inc-fact-k">{k}</div>
-            <div className="inc-fact-v">{v}</div>
-          </div>
-        ))}
-      </div>
-
-      <div className="inc-actions">
-        <button className="btn" onClick={() => onGoto('investigation')}>View investigation</button>
-        <button className="btn" onClick={() => onOpen(summary.incident_id)}>Open incident</button>
-        {awaiting ? (
-          <>
-            <button className="btn primary" disabled={busy} onClick={onApprove}>Approve and execute</button>
-            <button className="btn danger" disabled={busy} onClick={onReject}>Reject</button>
-          </>
-        ) : null}
-      </div>
     </div>
   )
 }

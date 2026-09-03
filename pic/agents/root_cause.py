@@ -14,7 +14,6 @@ traffic-mix change, and then "fix" it by rerouting healthy traffic.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
 
 from ..schemas import (
     AgentResult,

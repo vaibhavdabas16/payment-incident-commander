@@ -60,7 +60,6 @@ export default function App() {
   const [agents, setAgents] = useState([])
   const [health, setHealth] = useState(null)
   const [simOptions, setSimOptions] = useState(null)
-  const [events, setEvents] = useState([])
   const [evaluation, setEvaluation] = useState(null)
   const [status, setStatus] = useState('connecting')
   const [busy, setBusy] = useState(false)
@@ -75,19 +74,11 @@ export default function App() {
 
   /* ---------------------------------------------------------- live stream */
 
-  useEffect(() => {
-    const close = connectStream(
-      (event) => {
-        if (event.kind === 'replay') {
-          setEvents((event.events || []).slice(-80).reverse())
-          return
-        }
-        setEvents((prev) => [event, ...prev].slice(0, 80))
-      },
-      (s) => setStatus(s),
-    )
-    return close
-  }, [])
+  /* The socket is what makes the header honest about whether the page is still connected to a
+   * running world. Its payloads used to feed an activity feed that no page renders any more, so
+   * they are read and dropped; the per-incident step trace shows the same work, sourced from the
+   * incident record rather than from a buffer that a reconnect would lose. */
+  useEffect(() => connectStream(() => {}, setStatus), [])
 
   /* -------------------------------------------------------------- polling */
 
@@ -250,7 +241,7 @@ export default function App() {
   }
 
   const live = incidents.find((i) => i.state !== 'CLOSED') || null
-  const shared = { metrics, series, incidents, incident: detail, agents, health, events, scenarios, busy, notice, error }
+  const shared = { metrics, series, incidents, incident: detail, agents, health, scenarios, busy, notice, error }
 
   return (
     <div className={`shell ${collapsed ? 'collapsed' : ''}`}>

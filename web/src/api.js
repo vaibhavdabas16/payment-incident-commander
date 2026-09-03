@@ -104,10 +104,6 @@ export function formatClock(iso) {
   return new Date(iso).toISOString().slice(11, 19)
 }
 
-export function severityClass(severity) {
-  return (severity || 'low').toLowerCase()
-}
-
 /** Reconnecting WebSocket for the live agent event stream. */
 export function connectStream(onEvent, onStatus) {
   let socket = null
