@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import SuccessRateChart from './Chart.jsx'
 import { formatClock, formatINR, formatPct } from './api.js'
 import {
@@ -80,10 +81,9 @@ export function CommandCenter({
                     <button className="btn danger" disabled={busy} onClick={onReject}>Reject</button>
                   </>
                 ) : null}
-                <button className="btn" onClick={() => onGoto('investigation')}>View investigation</button>
-                {incidents?.length > 1 ? (
-                  <button className="btn" onClick={() => onOpen(shown.incident_id)}>All incidents</button>
-                ) : null}
+                <button className="btn" onClick={() => onOpen(shown.incident_id)}>
+                  View the investigation
+                </button>
               </div>
             </div>
           ) : (
@@ -494,7 +494,12 @@ export function Benchmark({ report, embedded = false }) {
         {groups.map(([name, rows]) => (
           <Card key={name} title={name}>
             <dl className="kv">
-              {rows.map(([k, v]) => <><dt key={k}>{k}</dt><dd key={`${k}v`}>{v}</dd></>)}
+              {rows.map(([k, v]) => (
+                <Fragment key={k}>
+                  <dt>{k}</dt>
+                  <dd>{v}</dd>
+                </Fragment>
+              ))}
             </dl>
           </Card>
         ))}

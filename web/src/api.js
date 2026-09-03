@@ -47,7 +47,10 @@ async function json(path, options) {
 }
 
 export const api = {
-  health: () => json('/api/health'),
+  // `health` is per-segment health; the process-level /api/health is `status`. They were both
+  // named `health` here, so the second silently shadowed the first and /api/health was
+  // unreachable from the client.
+  status: () => json('/api/health'),
   metrics: () => json('/api/metrics'),
   series: (windowSeconds = 60, count = 60) =>
     json(`/api/series?window_seconds=${windowSeconds}&count=${count}`),
@@ -55,7 +58,7 @@ export const api = {
   incident: (id) => json(`/api/incidents/${id}`),
   scenarios: () => json('/api/scenarios'),
   agents: () => json('/api/agents'),
-  health: () => json('/api/health/segments'),
+  health: () => json('/api/health/segments'),  // per payment method, provider and issuer
   simulationOptions: () => json('/api/simulation/options'),
   customScenario: (body) =>
     json('/api/scenarios/custom', {

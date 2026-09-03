@@ -7,6 +7,10 @@ import Mark from './Mark.jsx'
 import Simulate from './Simulate.jsx'
 
 const POLL_MS = 1500
+// Segment health is a five-minute window, so refetching it on the live cadence redrew identical
+// bars while re-scanning five minutes of events per payment method, provider and issuer on the
+// server — comfortably the most expensive request the dashboard made, for no visible difference.
+const HEALTH_POLL_MS = 6000
 
 const NAV = [
   ['command', 'Overview', 'ico-grid'],
@@ -89,13 +93,10 @@ export default function App() {
 
   const refresh = useCallback(async () => {
     try {
-      const [m, s, i, h] = await Promise.all([
-        api.metrics(), api.series(60, 45), api.incidents(), api.health().catch(() => null),
-      ])
+      const [m, s, i] = await Promise.all([api.metrics(), api.series(60, 45), api.incidents()])
       setMetrics(m)
       setSeries(s.points)
       setIncidents(i.incidents)
-      if (h) setHealth(h)
       setError(null)
       if (!pinned.current && i.incidents.length) {
         setSelectedId((current) => current ?? i.incidents[0].incident_id)
@@ -110,6 +111,13 @@ export default function App() {
     const timer = setInterval(refresh, POLL_MS)
     return () => clearInterval(timer)
   }, [refresh])
+
+  useEffect(() => {
+    const load = () => api.health().then(setHealth).catch(() => {})
+    load()
+    const timer = setInterval(load, HEALTH_POLL_MS)
+    return () => clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     api.scenarios().then((d) => setScenarios(d.scenarios)).catch(() => {})

@@ -132,7 +132,9 @@ button { font: inherit; }
 .side-name { display: flex; flex-direction: column; min-width: 0; }
 .side-name b { font-size: 13.5px; font-weight: 600; white-space: nowrap; }
 .side-name span { font-size: 11px; color: var(--text-3); white-space: nowrap; }
-.shell.collapsed .side-name, .shell.collapsed .nav-item span, .shell.collapsed .side-foot-text { display: none; }
+/* The label, not the icon: `.nav-item span` matched both, so collapsing the sidebar left a
+   column of blank buttons rather than a rail of icons. Same fix in the 900px query. */
+.shell.collapsed .side-name, .shell.collapsed .nav-item span:not(.ico), .shell.collapsed .side-foot-text { display: none; }
 
 .nav-group { margin-top: 10px; }
 .nav-label {
@@ -521,7 +523,9 @@ details.more[open] > summary { margin-bottom: 10px; }
 
 @media (max-width: 900px) {
   .shell { grid-template-columns: 64px minmax(0, 1fr); }
-  .side-name, .nav-item span, .side-foot-text { display: none; }
+  /* The label, not the icon. `.nav-item span` matched both, so the collapsed rail was a
+     column of blank 64px buttons with nothing to identify them by. */
+  .side-name, .nav-item span:not(.ico), .side-foot-text { display: none; }
   .content { padding: 16px; }
 }
 
