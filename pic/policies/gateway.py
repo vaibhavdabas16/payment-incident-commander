@@ -89,8 +89,12 @@ class InterventionHistory:
         self.failed_at.setdefault(incident_id, []).append(at)
 
     def actions_in_last_hour(self, now: datetime) -> int:
+        # Drop what has aged out while counting. Only the last hour is ever consulted, so a
+        # process that stays up for days was keeping — and rescanning — every timestamp it had
+        # ever recorded to answer a question about the last sixty minutes.
         cutoff = now - timedelta(hours=1)
-        return sum(1 for t in self.executed_at if t >= cutoff)
+        self.executed_at = [t for t in self.executed_at if t >= cutoff]
+        return len(self.executed_at)
 
     def seconds_since_failure(self, incident_id: str, now: datetime) -> float | None:
         failures = self.failed_at.get(incident_id, [])
@@ -103,6 +107,19 @@ class InterventionHistory:
 
     def cumulative_shift_from(self, incident_id: str, route: str) -> float:
         return self.cumulative_shift_pct.get(incident_id, {}).get(route, 0.0)
+
+    def clear(self) -> None:
+        """Forget every intervention. Used when a demo world is reset to a clean baseline.
+
+        The per-incident maps are not pruned when an incident closes, and must not be: `retry`
+        and `override` re-enter the pipeline under the same incident id, and the attempt cap and
+        cooling-off period have to still be counting when they do.
+        """
+        self.executed_at.clear()
+        self.failed_at.clear()
+        self.cumulative_shift_pct.clear()
+        self.attempts.clear()
+        self.active_routes.clear()
 
 
 class PolicyGateway:

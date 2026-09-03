@@ -696,10 +696,19 @@ def control(command: str, speedup: float | None = None) -> dict[str, Any]:
         # three overlapping degradations leave the merchant at 55% success, and every new
         # injection correlates into the incident already open instead of showing up as its own -
         # so the button looks broken when it is working exactly as designed.
-        eng().simulator.deactivate_all()
-        eng().supervisor.incidents.clear()
-        eng().supervisor._incident_seq = 0
-        eng().detector._degraded_periods.clear()
+        engine = eng()
+        engine.simulator.deactivate_all()
+        engine.supervisor.incidents.clear()
+        engine.supervisor._incident_seq = 0
+        engine.detector._degraded_periods.clear()
+        # The gateway's rate limiter counts by simulated time, and Reset does not rewind the
+        # clock. So actions from before a reset kept counting against the merchant's four-per-hour
+        # cap, and a visitor who reset and immediately ran another scenario watched policy refuse
+        # an action for a reason nothing on screen could explain any more.
+        engine.gateway.history.clear()
+        # Notifications and tickets are the audit surface of incidents that no longer exist.
+        engine.tool_context.notifications.clear()
+        engine.tool_context.tickets.clear()
     else:
         raise HTTPException(status_code=400, detail=f"unknown command {command}")
     return {"running": sess().running, "speedup": sess().speedup}
