@@ -245,6 +245,22 @@ export default function App() {
    *
    *  It records and nothing more: the endpoint cannot change merchant policy, and the card the
    *  button sits on says so. */
+  /** Load the deterministic seeded history, so the learning surfaces have something to show.
+   *
+   *  Explicit and labelled: seeded records carry a flag the UI renders wherever they appear. It
+   *  exists because a merchant who has run one incident has an empty playbook - honest, and a
+   *  demonstration of nothing. */
+  const seedHistory = async () => {
+    setNotice({
+      kind: 'reset',
+      text: 'Loaded seeded demo history. It is marked as seeded everywhere it appears — the next incident of this kind will be decided against it.',
+    })
+    await act(async () => {
+      await api.seedHistory()
+      setLearning(await api.learning())
+    })
+  }
+
   const decidePrevention = async (recommendation, decision) => {
     setNotice({
       kind: 'reset',
@@ -340,16 +356,18 @@ export default function App() {
               {...shared}
               onRunHeadline={runHeadline}
               selectedId={selectedId}
-              onSelect={(id) => { pinned.current = true; setSelectedId(id) }}
-              onOpen={open} onApprove={approve} onReject={reject} onGoto={setPage}
-              onStep={runStep}
+              onOpen={open} onApprove={approve} onGoto={setPage}
+              onSeed={seedHistory}
             />
           ) : null}
           {page === 'incidents' ? (
-            <Incidents {...shared} selectedId={selectedId} onOpen={openInList} onApprove={approve} onReject={reject} onStep={runStep} />
+            <Incidents
+              {...shared} selectedId={selectedId} onOpen={openInList}
+              onApprove={approve} onReject={reject} onStep={runStep} onGoto={setPage}
+            />
           ) : null}
           {page === 'learning' ? (
-            <Learning learning={learning} busy={busy} onDecide={decidePrevention} />
+            <Learning learning={learning} busy={busy} onDecide={decidePrevention} onSeed={seedHistory} />
           ) : null}
           {page === 'health' ? <Health health={health} metrics={metrics} series={series} /> : null}
           {page === 'simulate' ? (

@@ -1,10 +1,10 @@
 import { Fragment } from 'react'
 import SuccessRateChart from './Chart.jsx'
-import { formatClock, formatINR, formatPct } from './api.js'
+import IncidentStory from './Incident.jsx'
+import { formatDuration, formatINR, formatPct } from './api.js'
 import {
-  ActionOutcomes, ActivityLog, AgentTrace, Card, DecisionTrace, Empty, ErrorBox, HealthBars, Led,
-  MemoryTable, NextSteps, PreventionCard, RevenueBar, SimilarIncidents, Skeleton, Tag,
-  confidenceInWords, impactFacts, readableAction, severityTone, statusTone,
+  Card, Empty, ErrorBox, HealthBars, Led, MemoryTable, PreventionCard, RevenueBar, Skeleton, Tag,
+  confidenceInWords, readableAction, severityTone, statusTone,
 } from './components.jsx'
 
 /* Pages. Every figure comes from the API; where the system has not produced something yet the
@@ -12,342 +12,188 @@ import {
 
 /* =========================================================== command centre */
 
+/** The executive view. Five seconds should answer: how much is at risk, how much came back, how
+ *  much of that was automatic, what has been learned, and what could be prevented next.
+ *
+ *  It deliberately does not show the agent pipeline. Someone opening this page is asking about
+ *  their money, not about the software; the pipeline is one click away on the incident itself. */
 export function CommandCenter({
-  metrics, series, incidents, incident, agents, health, busy, error, notice,
-  selectedId, onSelect, onOpen, onApprove, onReject, onGoto, onRunHeadline, onStep, learning,
+  metrics, series, incidents, incident, health, busy, error, notice,
+  selectedId, onOpen, onApprove, onRunHeadline, learning, onGoto, onSeed,
 }) {
   const live = incidents?.find((i) => i.state !== 'CLOSED') || null
   const shown = incidents?.find((i) => i.incident_id === selectedId) || live || incidents?.[0] || null
-  const closed = shown && shown.state === 'CLOSED'
-  const awaiting = incident?.state === 'AWAITING_HUMAN_APPROVAL'
-  const rc = incident?.root_cause
   const matches = incident && shown && incident.incident_id === shown.incident_id
+  const rev = metrics?.revenue
+  const prevention = (learning?.prevention || []).filter((r) => r.status === 'PROPOSED')
 
   return (
     <>
       {error ? <ErrorBox>{error}</ErrorBox> : null}
 
-      <RevenueHeadline metrics={metrics} incident={matches ? incident : null} live={live} />
+      <div className="page-head">
+        <div>
+          <h1>Revenue operations</h1>
+          <p>
+            What the agent is protecting, what it has recovered, and what it has learned to do
+            about it. Every figure is measured from this merchant's own payment traffic.
+          </p>
+        </div>
+        <span className="pill mono">{metrics ? formatPct(metrics.success_rate) : '\u2014'} success rate</span>
+      </div>
 
-      <section className={`focus ${live ? 'alert' : ''}`}>
-        <header className="focus-head">
-          <span className="focus-status">
-            <Led tone={live ? 'crit' : 'ok'} live={!!live} />
-            {live
-              ? (shown?.severity === 'CRITICAL' ? 'Critical incident' : 'Incident open')
-              : shown ? outcomeWords(shown, incident) : 'All systems operational'}
-          </span>
-          <span className="focus-spacer" />
-          {/* With more than one incident the card has to say so and let you move between them.
-              Showing only the newest hid three of four. */}
-          {incidents?.length > 1 ? (
-            <span className="focus-switch">
-              {incidents.slice(0, 6).map((i) => (
-                <button
-                  key={i.incident_id}
-                  className={`switch ${i.incident_id === shown?.incident_id ? 'on' : ''}`}
-                  onClick={() => onSelect(i.incident_id)}
-                  title={i.title}
-                >
-                  <Led tone={i.state !== 'CLOSED' ? 'crit' : i.outcome?.includes('RECOVERED') ? 'ok' : 'warn'} />
-                  {i.incident_id.replace('INC-', '#')}
-                </button>
-              ))}
-            </span>
-          ) : null}
-          <span className="focus-time mono">{metrics ? formatPct(metrics.success_rate) : '\u2014'} success</span>
-        </header>
+      <div className="exec">
+        <ExecCard
+          k="Revenue at risk"
+          v={formatINR(metrics?.revenue_at_risk_per_hour_paise)}
+          unit="/hour"
+          hint={live ? 'across open incidents, right now' : 'nothing open'}
+          tone={metrics?.revenue_at_risk_per_hour_paise ? 'crit' : 'ok'}
+        />
+        <ExecCard
+          k="Revenue recovered"
+          v={formatINR((rev?.revenue_protected_paise || 0) + (rev?.revenue_recovered_paise || 0))}
+          hint={rev?.incidents ? `across ${rev.incidents} closed incident${rev.incidents === 1 ? '' : 's'}` : 'nothing closed yet'}
+          tone="ok"
+        />
+        <ExecCard
+          k="Recovery rate"
+          v={rev?.revenue_at_risk_paise ? formatPct(rev.recovery_rate, 0) : '\u2014'}
+          hint={rev?.revenue_at_risk_paise ? `of ${formatINR(rev.revenue_at_risk_paise)} at risk` : ''}
+        />
+        <ExecCard
+          k="Active incidents"
+          v={metrics?.active_incidents ?? '\u2014'}
+          hint={live ? live.title : 'all clear'}
+          tone={metrics?.active_incidents ? 'crit' : 'ok'}
+        />
+        <ExecCard
+          k="Auto-recovered"
+          v={metrics?.auto_recovered ?? '\u2014'}
+          hint="closed without a person"
+        />
+        <ExecCard
+          k="Learned patterns"
+          v={metrics?.learned_patterns ?? '\u2014'}
+          hint={`${metrics?.incidents_remembered ?? 0} incidents remembered`}
+          onClick={() => onGoto('learning')}
+        />
+        <ExecCard
+          k="Prevention"
+          v={prevention.length}
+          hint={prevention.length ? 'awaiting merchant approval' : 'none proposed'}
+          tone={prevention.length ? 'warn' : ''}
+          onClick={prevention.length ? () => onGoto('learning') : undefined}
+        />
+        <ExecCard
+          k="Payments rescued"
+          v={(metrics?.orders_recovered ?? 0).toLocaleString()}
+          hint={metrics?.orders_recoverable ? `of ${metrics.orders_recoverable.toLocaleString()} recoverable` : 'after infrastructure recovery'}
+        />
+      </div>
 
-        <div className="focus-body">
-          {shown ? (
-            <div className="focus-inc">
-              <h2>{shown.title}</h2>
-              <p>
-                {rc && matches
-                  ? `${rc.most_likely_root_cause}. ${confidenceInWords(rc.confidence)}.`
+      {shown ? (
+        <Card
+          title={live ? 'Open incident' : 'Most recent incident'}
+          right={<button className="btn sm" onClick={() => onOpen(shown.incident_id)}>Open the full story</button>}
+        >
+          <div className="glance">
+            <div className="glance-main">
+              <div className="glance-top">
+                <Led tone={live ? 'crit' : 'ok'} live={!!live} />
+                <b>{shown.title}</b>
+                <Tag tone={severityTone(shown.severity)}>{shown.severity}</Tag>
+              </div>
+              <p className="glance-why">
+                {matches && incident.root_cause
+                  ? `${incident.root_cause.most_likely_root_cause}. ${confidenceInWords(incident.root_cause.confidence)}.`
                   : 'Agents are investigating\u2026'}
               </p>
-
-              {matches ? <Result incident={incident} busy={busy} onStep={onStep} /> : null}
-
-              <div className="focus-facts">
-                {impactFacts(matches ? incident : null).map(([k, v]) => (
-                  <div key={k}><span>{k}</span><b>{v}</b></div>
-                ))}
-              </div>
-
-              {matches ? <WhyThisAction incident={incident} /> : null}
-              {matches && incident?.revenue?.measurable ? (
-                <RevenueBar revenue={incident.revenue} compact />
+              {matches && incident.proposal ? (
+                <p className="glance-do">
+                  <span>Agent recommends</span> {readableAction(incident.proposal.action)}
+                  {incident.proposal.parameters?.percentage != null
+                    ? ` ${incident.proposal.parameters.percentage}%`
+                    : ''}
+                </p>
               ) : null}
-              {matches ? <Learned incident={incident} /> : null}
-
-              <div className="focus-actions">
-                {awaiting && matches ? (
-                  <>
-                    <button className="btn primary" disabled={busy} onClick={onApprove}>Approve and execute</button>
-                    <button className="btn danger" disabled={busy} onClick={onReject}>Reject</button>
-                  </>
-                ) : null}
-                <button className="btn" onClick={() => onOpen(shown.incident_id)}>
-                  View the investigation
+              {matches && incident.state === 'AWAITING_HUMAN_APPROVAL' ? (
+                <button className="btn primary" disabled={busy} onClick={onApprove}>
+                  Approve and execute
                 </button>
-              </div>
+              ) : null}
             </div>
-          ) : (
-            <div className="focus-idle">
-              <div className="idle-cta">
-                <div>
-                  <b>Nothing is broken right now.</b>
-                  <span>
-                    Break something and watch the agents detect it, investigate, price it, decide,
-                    ask permission, act — then check their own work, go back for the payments
-                    already lost, and remember what happened.
-                  </span>
+            <div className="glance-side">
+              {matches && incident.revenue?.measurable ? (
+                <>
+                  <RevenueBar revenue={incident.revenue} compact />
+                  <div className="facts">
+                    <div className="fact"><span>At risk</span><b>{formatINR(incident.revenue.revenue_at_risk_paise)}</b></div>
+                    <div className="fact"><span>Recovery</span><b>{formatPct(incident.revenue.recovery_rate, 0)}</b></div>
+                    <div className="fact"><span>Duration</span><b>{formatDuration(incident.revenue.exposure_seconds)}</b></div>
+                  </div>
+                </>
+              ) : (
+                <div className="facts">
+                  <div className="fact">
+                    <span>At risk</span>
+                    <b>{formatINR(shown.revenue_at_risk_per_hour_paise)}/hr</b>
+                  </div>
                 </div>
-                <button className="btn primary" disabled={busy} onClick={onRunHeadline}>
-                  {busy ? 'Starting\u2026' : 'Run an incident'}
-                </button>
-              </div>
-              {/* The scenario starts instantly; the incident does not, because detection has to
-                  see enough degraded traffic to be sure. Saying so is the difference between a
-                  wait and a broken button. */}
-              {notice ? <div className={`notice ${notice.kind}`}>{notice.text}</div> : null}
-              <SuccessRateChart points={series} baseline={metrics?.baseline_success_rate} height={168} />
+              )}
             </div>
+          </div>
+        </Card>
+      ) : (
+        <Card>
+          <div className="idle-cta">
+            <div>
+              <b>Nothing is broken right now.</b>
+              <span>
+                Break something and watch the agent detect it, price it in rupees, choose the
+                safest way out, prove whether it worked, and remember the answer.
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 9 }}>
+              {onSeed && !metrics?.incidents_remembered ? (
+                <button className="btn" disabled={busy} onClick={onSeed}>Load demo history</button>
+              ) : null}
+              <button className="btn primary" disabled={busy} onClick={onRunHeadline}>
+                {busy ? 'Starting\u2026' : 'Run an incident'}
+              </button>
+            </div>
+          </div>
+          {notice ? <div className={`notice ${notice.kind}`}>{notice.text}</div> : null}
+          <SuccessRateChart points={series} baseline={metrics?.baseline_success_rate} height={168} />
+        </Card>
+      )}
+
+      <div className="grid-2">
+        <Card title="Payment health" right={<button className="btn sm" onClick={() => onGoto('health')}>Details</button>}>
+          <HealthChips groups={[['Methods', health?.payment_method], ['Providers', health?.psp]]} />
+        </Card>
+        <Card title="What it would prevent next" right={<button className="btn sm" onClick={() => onGoto('learning')}>Learning</button>}>
+          {prevention.length ? (
+            <>
+              <p className="glance-why">{prevention[0].pattern}</p>
+              <div className="facts">
+                <div className="fact"><span>Occurrences</span><b>{prevention[0].occurrences}</b></div>
+                <div className="fact"><span>Historical loss</span><b>{formatINR(prevention[0].historical_revenue_lost_paise)}</b></div>
+                <div className="fact"><span>Estimated benefit</span><b>{formatINR(prevention[0].estimated_benefit_paise)}</b></div>
+              </div>
+              <p className="wf-note" style={{ marginTop: 10 }}>
+                Advisory. Merchant policy is only ever changed by a person editing the policy file.
+              </p>
+            </>
+          ) : (
+            <p className="muted">
+              A pattern needs at least three comparable incidents before it is worth a merchant's
+              attention.
+            </p>
           )}
-
-          {shown && matches ? (
-            <aside className="focus-trace">
-              <div className="trace-cap">{closed ? 'What the agents did' : 'Working now'}</div>
-              <AgentTrace incident={incident} agents={agents} />
-            </aside>
-          ) : null}
-        </div>
-
-        <footer className="focus-foot">
-          <HealthChips groups={[['', health?.payment_method], ['', health?.psp]]} />
-          <button className="btn sm" onClick={() => onGoto('health')}>Health</button>
-        </footer>
-      </section>
-
-      <NextUp learning={learning} onGoto={onGoto} />
+        </Card>
+      </div>
     </>
-  )
-}
-
-/** The first thing on the screen, and the only thing a merchant actually asked about.
- *
- *  While an incident is live this is exposure — the rate at which money is being lost right now.
- *  Once incidents have closed it becomes the outcome, because a threat that has been dealt with is
- *  no longer the headline. Both numbers come from the same ledger; neither is a projection. */
-function RevenueHeadline({ metrics, incident, live }) {
-  const totals = metrics?.revenue
-  const settled = totals && totals.revenue_at_risk_paise > 0
-  const exposure = metrics?.revenue_at_risk_per_hour_paise || 0
-
-  if (live && exposure > 0) {
-    return (
-      <section className="headline alert">
-        <div className="headline-main">
-          <span className="headline-k">Revenue at risk, right now</span>
-          <b className="headline-v">{formatINR(exposure)}<i>/hour</i></b>
-          <span className="headline-sub">
-            {incident?.root_cause
-              ? `${incident.root_cause.most_likely_root_cause} · ${confidenceInWords(incident.root_cause.confidence).toLowerCase()}`
-              : 'Agents are establishing the cause.'}
-          </span>
-        </div>
-        {settled ? <HeadlineTotals totals={totals} metrics={metrics} /> : null}
-      </section>
-    )
-  }
-
-  if (!settled) {
-    return (
-      <section className="headline">
-        <div className="headline-main">
-          <span className="headline-k">Revenue protected so far</span>
-          <b className="headline-v">{formatINR(0)}</b>
-          <span className="headline-sub">
-            Nothing has been at risk yet. Break something from Simulate and watch the money move.
-          </span>
-        </div>
-      </section>
-    )
-  }
-
-  return (
-    <section className="headline">
-      <div className="headline-main">
-        <span className="headline-k">Revenue recovered across {totals.incidents} incident{totals.incidents === 1 ? '' : 's'}</span>
-        <b className="headline-v">
-          {formatINR(totals.revenue_protected_paise + totals.revenue_recovered_paise)}
-        </b>
-        <span className="headline-sub">
-          of {formatINR(totals.revenue_at_risk_paise)} at risk · {formatPct(totals.recovery_rate, 0)} recovery rate
-        </span>
-      </div>
-      <HeadlineTotals totals={totals} metrics={metrics} />
-    </section>
-  )
-}
-
-function HeadlineTotals({ totals, metrics }) {
-  return (
-    <div className="headline-side">
-      <RevenueBar revenue={totals} />
-      <div className="facts">
-        <div className="fact"><span>Failed payments rescued</span><b>{(metrics?.orders_recovered || 0).toLocaleString()}</b></div>
-        <div className="fact"><span>Incidents remembered</span><b>{metrics?.incidents_remembered ?? 0}</b></div>
-        <div className="fact"><span>Prevention proposed</span><b>{metrics?.prevention_recommendations ?? 0}</b></div>
-      </div>
-    </div>
-  )
-}
-
-/** Why this action and not another. The historical case, where there is one. */
-function WhyThisAction({ incident }) {
-  const plan = incident?.recovery_plan
-  if (!plan) return null
-  const chosen = incident.proposal
-  return (
-    <div className="why">
-      <div className="why-k">Why this action</div>
-      <p>{chosen ? chosen.rationale : 'No action has been chosen yet.'}</p>
-      <p className="why-hist">{plan.historical_recommendation}</p>
-      {plan.similar_incidents?.length ? (
-        <details className="more">
-          <summary>{`The ${plan.similar_incidents.length} comparable incidents behind that`}</summary>
-          <SimilarIncidents rows={plan.similar_incidents} compact />
-        </details>
-      ) : null}
-    </div>
-  )
-}
-
-/** What the agent took away from this one. */
-function Learned({ incident }) {
-  const l = incident?.learning
-  if (!l) return null
-  const size = l.intervention_magnitude ? ` at ${l.intervention_magnitude}%` : ''
-  return (
-    <div className="why learned">
-      <div className="why-k">What it learned</div>
-      <p>
-        <b>{readableAction(l.actual_action_executed)}{size}</b> under this failure pattern →{' '}
-        {l.verification_result.replace(/_/g, ' ').toLowerCase()}
-        {l.rollback_required ? ', and had to be rolled back' : ''}.
-      </p>
-      <p className="why-hist">
-        Recorded against <code>{signatureLabel(l.failure_signature)}</code>.
-        {' '}Future incidents matching this signature will be weighed against it.
-      </p>
-    </div>
-  )
-}
-
-/** The signature as a person reads it.
- *
- *  Built here rather than shipped from the backend because `FailureSignature.label()` is a method
- *  and methods do not survive `model_dump`. The fields it composes are all present, so the label
- *  is derived from the same data on both sides rather than being a second, drifting string. */
-function signatureLabel(signature) {
-  if (!signature) return 'unclassified'
-  const parts = [
-    signature.payment_method,
-    signature.psp || signature.issuer || signature.gateway,
-    signature.dominant_error_code,
-  ].filter(Boolean)
-  return parts.length ? parts.join(' · ') : signature.root_cause_id || 'unclassified'
-}
-
-/** What should happen next: the prevention the system is asking for. */
-function NextUp({ learning, onGoto }) {
-  const recs = (learning?.prevention || []).filter((r) => r.status === 'PROPOSED')
-  if (!recs.length) return null
-  const top = recs[0]
-  return (
-    <section className="headline next">
-      <div className="headline-main">
-        <span className="headline-k">What should happen next</span>
-        <b className="headline-v small">{top.pattern}</b>
-        <span className="headline-sub">
-          {readableAction(top.proposed_action)} · {formatINR(top.estimated_benefit_paise)} estimated benefit ·
-          needs merchant approval
-        </span>
-      </div>
-      <div className="headline-side">
-        <button className="btn" onClick={() => onGoto('learning')}>
-          {recs.length > 1 ? `Review ${recs.length} recommendations` : 'Review the recommendation'}
-        </button>
-      </div>
-    </section>
-  )
-}
-
-/** How the incident ended, in one line. Everything else on this card describes the problem; the
- *  card never said whether it was solved, which is the only thing a finished incident is about. */
-function outcomeWords(summary, incident) {
-  const same = incident?.incident_id === summary.incident_id
-  const v = same ? incident.verification : null
-  if (same && rolledBack(incident)) return 'Fix reverted \u00b7 handed over'
-  if (v?.status === 'RECOVERED') return 'Recovered \u00b7 verified'
-  if (v?.status === 'PARTIALLY_RECOVERED') return 'Partly recovered'
-  if (summary.outcome === 'HANDED_TO_HUMAN' || summary.outcome === 'ESCALATED') return 'Handed to a human'
-  return 'Resolved \u00b7 monitoring'
-}
-
-function rolledBack(incident) {
-  return (incident?.audit || []).some((a) => String(a.approved_by || '').startsWith('policy_engine:rollback'))
-}
-
-function Result({ incident, busy, onStep }) {
-  const v = incident.verification
-  const executed = (incident.audit || []).filter((a) => !String(a.approved_by || '').startsWith('policy_engine:'))
-  const action = executed[0]
-  if (!v && !action && !incident.escalation) return null
-
-  const reverted = rolledBack(incident)
-  const tone = reverted
-    ? 'warn'
-    : v?.status === 'RECOVERED' ? 'ok'
-    : v?.status === 'PARTIALLY_RECOVERED' ? 'warn'
-    : v ? 'crit' : 'mute'
-  const headline = reverted
-    ? 'The fix did not work, so the agent undid it'
-    : v?.status === 'RECOVERED' ? 'Recovered, verified against a control group'
-    : v?.status === 'PARTIALLY_RECOVERED' ? 'Partly recovered \u2014 the incident stays open'
-    : v ? 'The action did not help'
-    : 'Handed to a human without acting'
-
-  return (
-    <div className={`result ${tone}`}>
-      <div className="result-top">
-        <Tag tone={tone}>result</Tag>
-        <b>{headline}</b>
-      </div>
-      {action ? (
-        <div className="result-line">
-          <span>Action</span>{readableAction(action.action)} · approved by {action.approved_by}
-        </div>
-      ) : null}
-      {v ? <div className="result-line"><span>Measured</span>{v.explanation}</div> : null}
-      {incident.escalation ? (
-        <>
-          <div className="result-line">
-            <span>Handover</span>{incident.escalation.because || incident.escalation.reason}
-          </div>
-          <div className="result-line">
-            <span>Do next</span>{incident.escalation.recommended_human_action}
-          </div>
-          {onStep ? <NextSteps incident={incident} busy={busy} onStep={onStep} /> : null}
-        </>
-      ) : null}
-      {incident.time_to_mitigate_s != null ? (
-        <div className="result-line"><span>Acted</span>{Math.round(incident.time_to_mitigate_s)}s after detection</div>
-      ) : null}
-    </div>
   )
 }
 
@@ -375,20 +221,33 @@ function HealthChips({ groups }) {
   )
 }
 
+function ExecCard({ k, v, unit, hint, tone = '', onClick }) {
+  const Tag_ = onClick ? 'button' : 'div'
+  return (
+    <Tag_ className={`exec-card ${tone} ${onClick ? 'clickable' : ''}`} onClick={onClick}>
+      <span className="exec-k">{k}</span>
+      <b className="exec-v">{v}{unit ? <i>{unit}</i> : null}</b>
+      {hint ? <span className="exec-hint">{hint}</span> : null}
+    </Tag_>
+  )
+}
+
 /* ============================================================== incidents */
 
-export function Incidents({ incidents, incident, trace, busy, selectedId, onOpen, onApprove, onReject, onStep }) {
+export function Incidents({
+  incidents, incident, trace, learning, agents, metrics, busy, selectedId,
+  onOpen, onApprove, onReject, onStep, onGoto,
+}) {
   if (!incidents?.length) {
     return (
       <>
-        <div className="page-head"><div><h1>Incidents</h1><p>Every incident the system has opened, with its full workflow.</p></div></div>
-        <Card><Empty title="No incidents yet" body="Run something from Simulate and the agents will work it end to end here." facts={[{ label: 'Detector running', tone: 'ok', live: true }]} /></Card>
+        <div className="page-head"><div><h1>Incidents</h1><p>Every incident the agent has worked, told as one story each.</p></div></div>
+        <Card><Empty title="No incidents yet" body="Run something from Simulate and the agent will work it end to end here." facts={[{ label: 'Detector running', tone: 'ok', live: true }]} /></Card>
       </>
     )
   }
 
   const open = incidents.find((i) => i.incident_id === selectedId) || null
-  const summary = open || null
 
   return (
     <>
@@ -396,8 +255,8 @@ export function Incidents({ incidents, incident, trace, busy, selectedId, onOpen
         <div><h1>Incidents</h1><p>{incidents.length} recorded · newest first</p></div>
       </div>
 
-      {/* The list stays compact. One incident is open at a time, because a workflow is long and
-          two of them side by side is unreadable. */}
+      {/* The list stays a list. One incident is open at a time, because the story below is long
+          and two of them side by side is unreadable. */}
       <Card flush>
         <div className="inc-list">
           {incidents.map((i) => (
@@ -409,6 +268,9 @@ export function Incidents({ incidents, incident, trace, busy, selectedId, onOpen
               <span className="inc-row-id">{i.incident_id}</span>
               <Tag tone={severityTone(i.severity)}>{i.severity}</Tag>
               <span className="inc-row-t">{i.title}</span>
+              <span className="inc-row-money mono">
+                {i.revenue_at_risk_per_hour_paise ? `${formatINR(i.revenue_at_risk_per_hour_paise)}/hr` : ''}
+              </span>
               <span className="inc-row-state">
                 <Led
                   tone={i.state !== 'CLOSED' ? 'crit' : i.outcome?.includes('RECOVERED') ? 'ok' : 'warn'}
@@ -424,95 +286,22 @@ export function Incidents({ incidents, incident, trace, busy, selectedId, onOpen
         </div>
       </Card>
 
-      {summary && incident && incident.incident_id === summary.incident_id ? (
-        <IncidentDetail incident={incident} trace={trace} summary={summary} busy={busy} onApprove={onApprove} onReject={onReject} onStep={onStep} />
-      ) : summary ? (
-        <Card><Skeleton rows={5} /></Card>
+      {open && incident && incident.incident_id === open.incident_id ? (
+        <IncidentStory
+          incident={incident} trace={trace} learning={learning} agents={agents} busy={busy}
+          metrics={metrics}
+          onApprove={onApprove} onReject={onReject} onStep={onStep} onGoto={onGoto}
+        />
+      ) : open ? (
+        <Card><Skeleton rows={6} /></Card>
       ) : (
         <Card>
           <div className="empty" style={{ padding: '30px 20px' }}>
-            <p>Select an incident above to follow its workflow, stage by stage.</p>
+            <p>Select an incident above to read its story, from revenue at risk to what the agent learned.</p>
           </div>
         </Card>
       )}
     </>
-  )
-}
-
-function IncidentDetail({ incident, trace, summary, busy, onApprove, onReject, onStep }) {
-  const closed = incident.state === 'CLOSED'
-  const awaiting = incident.state === 'AWAITING_HUMAN_APPROVAL'
-  const reverted = (incident.audit || []).some((a) => String(a.approved_by || '').startsWith('policy_engine:rollback'))
-  const v = incident.verification
-  const tone = !closed ? (awaiting ? 'warn' : 'info')
-    : reverted ? 'warn'
-    : v?.status === 'RECOVERED' ? 'ok'
-    : incident.escalation ? 'warn' : 'mute'
-  const headline = !closed
-    ? (awaiting ? 'Waiting for your decision' : 'Agents are working this incident')
-    : reverted ? 'The fix did not work, so the agent undid it'
-    : v?.status === 'RECOVERED' ? 'Recovered, verified against a control group'
-    : v?.status === 'PARTIALLY_RECOVERED' ? 'Partly recovered — not claimed as a success'
-    : incident.escalation ? 'Handed to a human' : 'Closed'
-
-  return (
-    <Card
-      title={`${incident.incident_id} · ${incident.title}`}
-      right={<Tag tone={severityTone(incident.severity)}>{incident.severity}</Tag>}
-    >
-      {/* State first: whether it is running, waiting on you, or finished — and how it finished. */}
-      <div className={`banner ${tone}`}>
-        <div className="banner-top">
-          <Led tone={tone === 'info' ? 'agent' : tone} live={!closed} />
-          <b>{headline}</b>
-          {closed && incident.time_to_mitigate_s != null ? (
-            <span className="banner-when">acted {Math.round(incident.time_to_mitigate_s)}s after detection</span>
-          ) : null}
-        </div>
-        {awaiting ? (
-          <div className="banner-actions">
-            <button className="btn primary" disabled={busy} onClick={onApprove}>Approve and execute</button>
-            <button className="btn danger" disabled={busy} onClick={onReject}>Reject</button>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="inc-facts" style={{ marginTop: 16, paddingTop: 16 }}>
-        {impactFacts(incident).map(([k, val]) => (
-          <div key={k}><div className="inc-fact-k">{k}</div><div className="inc-fact-v">{val}</div></div>
-        ))}
-      </div>
-
-      {incident.escalation ? (
-        <div className="handover">
-          {/* The reason has to sit above the buttons. An operator asked to choose an action
-              before being told what happened is being asked to guess. */}
-          <p className="handover-why">
-            {incident.escalation.because || incident.escalation.reason}
-          </p>
-          <p className="handover-rec">{incident.escalation.recommended_human_action}</p>
-          {onStep ? <NextSteps incident={incident} busy={busy} onStep={onStep} /> : null}
-        </div>
-      ) : null}
-
-      {incident.revenue?.measurable ? (
-        <>
-          <h4 className="wf-heading">What happened financially</h4>
-          <RevenueBar revenue={incident.revenue} />
-          <ol className="calc">{incident.revenue.calculation.map((l, i) => <li key={i}>{l}</li>)}</ol>
-        </>
-      ) : null}
-
-      <h4 className="wf-heading">Decision trace</h4>
-      <p className="wf-note" style={{ marginBottom: 12 }}>
-        Observation to learning, one stage at a time. Every stage can be opened to see the evidence
-        underneath it — findings and the tool that produced them, hypotheses for and against, the
-        comparable incidents this was decided against, every option that was priced, and every
-        policy rule the gateway evaluated.
-      </p>
-      <DecisionTrace trace={trace && trace.incident_id === incident.incident_id ? trace : null} loading />
-      <ActivityLog incident={incident} />
-    </Card>
   )
 }
 
@@ -539,75 +328,145 @@ export function Health({ health, metrics, series }) {
 
 /* =============================================================== learning */
 
-/** What the system has learned, and what it wants to do about it.
+/** What the system has learned, as a playbook a payments engineer could argue with.
  *
- *  This page is the closed loop made inspectable: every record here was written when a real
- *  incident closed in this session, every success rate is a count over those records, and every
- *  recommendation is derived from them. Nothing on it is generated for display.
+ *  This is the between-incidents view. `store.py` answers what an agent asks mid-incident; this
+ *  answers what a person asks afterwards - what do you now believe, on what evidence, and what
+ *  would you avoid? It is read-only: the strategy layer queries memory directly, so nothing on
+ *  this page sits on the path from a proposal to an execution.
  */
-export function Learning({ learning, busy, onDecide }) {
+export function Learning({ learning, busy, onDecide, onSeed }) {
   const records = learning?.records || []
   const outcomes = learning?.outcomes || {}
   const prevention = learning?.prevention || []
+  const playbook = learning?.playbook || []
+  const seeded = learning?.seeded_remembered || 0
+  const influenced = learning?.influenced || []
 
   return (
     <>
       <div className="page-head">
         <div>
-          <h1>Learning</h1>
+          <h1>What the agent has learned</h1>
           <p>
             Every incident that closes is priced, reduced to a structured record and stored —
             including the ones that went badly. Those records are what the next incident is decided
-            against, and what the recurring-failure patterns below are mined from.
+            against, and what the playbook below is derived from.
           </p>
         </div>
-        <span className="pill mono">{records.length} incidents remembered</span>
+        <div style={{ display: 'flex', gap: 9, alignItems: 'center' }}>
+          <span className="pill mono">{records.length} remembered</span>
+          {onSeed ? (
+            <button className="btn" disabled={busy} onClick={onSeed}>Load demo history</button>
+          ) : null}
+        </div>
       </div>
 
-      {outcomes.incidents ? (
-        <Card title="Revenue across everything it remembers" sub={`${outcomes.incidents} incidents`}>
-          <RevenueBar revenue={{
-            revenue_at_risk_paise: outcomes.revenue_at_risk_paise,
-            revenue_protected_paise: outcomes.revenue_protected_paise,
-            revenue_recovered_paise: outcomes.revenue_recovered_paise,
-            revenue_lost_paise: outcomes.revenue_lost_paise,
-          }} />
-          <div className="facts" style={{ marginTop: 14 }}>
-            <div className="fact"><span>Recovery rate</span><b>{formatPct(outcomes.recovery_rate, 0)}</b></div>
-            <div className="fact"><span>Median time to recovery</span><b>{outcomes.median_time_to_recovery_s ? `${Math.round(outcomes.median_time_to_recovery_s)}s` : '—'}</b></div>
-            <div className="fact"><span>Rolled back</span><b>{outcomes.rollbacks ?? 0}</b></div>
-            <div className="fact"><span>Needed a human</span><b>{outcomes.human_interventions ?? 0}</b></div>
+      {seeded ? (
+        <div className="notice">
+          <b>{seeded} of {records.length}</b> remembered incidents are seeded demo history, marked{' '}
+          <span className="tag mute">seeded</span> wherever they appear. They describe the same
+          failure the UPI PSP scenario produces, so a live incident retrieves them on merit — but
+          they were not measured from traffic in this session.
+        </div>
+      ) : null}
+
+      {records.length ? (
+        <div className="exec">
+          <ExecCard k="Patterns discovered" v={playbook.length} hint="distinct failure signatures" />
+          <ExecCard
+            k="Interventions that worked"
+            v={(outcomes.actions || []).reduce((n, a) => n + a.helped, 0)}
+            hint={`of ${(outcomes.actions || []).reduce((n, a) => n + a.attempts, 0)} executed`}
+            tone="ok"
+          />
+          <ExecCard
+            k="Rolled back"
+            v={outcomes.rollbacks ?? 0}
+            hint="undone after failing verification"
+            tone={outcomes.rollbacks ? 'warn' : ''}
+          />
+          <ExecCard
+            k="Revenue protected"
+            v={formatINR((outcomes.revenue_protected_paise || 0) + (outcomes.revenue_recovered_paise || 0))}
+            hint={`of ${formatINR(outcomes.revenue_at_risk_paise)} at risk`}
+          />
+          <ExecCard
+            k="Average recovery"
+            v={formatPct(outcomes.recovery_rate, 0)}
+            hint="across everything it remembers"
+          />
+          <ExecCard
+            k="Median time to recover"
+            v={outcomes.median_time_to_recovery_s ? formatDuration(outcomes.median_time_to_recovery_s) : '—'}
+            hint="open to closed"
+          />
+        </div>
+      ) : null}
+
+      {playbook.length ? (
+        <>
+          <h2 className="section-h">Learned playbook</h2>
+          {playbook.map((e) => <PlaybookEntry key={e.signature_key} entry={e} />)}
+        </>
+      ) : (
+        <Card>
+          <Empty
+            title="Nothing learned yet"
+            body="Every incident that closes is priced, reduced to a structured record and stored here — including the ones that went badly. Run an incident from Simulate, or load the seeded demo history."
+          />
+        </Card>
+      )}
+
+      {(learning?.by_payment_method?.length || learning?.by_provider?.length) ? (
+        <div className="grid-2">
+          <Card title="Most effective action, by payment method">
+            <Effectiveness rows={learning.by_payment_method} keyField="payment_method" />
+          </Card>
+          <Card title="Most effective action, by provider">
+            <Effectiveness rows={learning.by_provider} keyField="psp" />
+          </Card>
+        </div>
+      ) : null}
+
+      {influenced.length ? (
+        <Card
+          title="Incidents decided with history on the record"
+          sub={`${influenced.length} of ${records.length}`}
+        >
+          <div className="rows">
+            {influenced.slice(-8).reverse().map((r) => (
+              <div className="row" key={r.incident_id}>
+                <span className="row-id">{r.incident_id}</span>
+                <Tag tone={r.helped ? 'ok' : 'warn'}>
+                  {(r.verification || '').replace(/_/g, ' ').toLowerCase()}
+                </Tag>
+                <span className="row-main">
+                  <b>{readableAction(r.action)}{r.magnitude != null ? ` ${r.magnitude}%` : ''}</b>
+                  <span className="row-sub">
+                    decided with {r.informed_by} comparable incident{r.informed_by === 1 ? '' : 's'} already recorded
+                    {r.seeded ? ' · seeded' : ''}
+                  </span>
+                </span>
+                <span className="row-num">{formatPct(r.recovery_rate, 0)}</span>
+                <span className="row-num dim">{r.label}</span>
+              </div>
+            ))}
           </div>
+          <p className="wf-note" style={{ marginTop: 12 }}>
+            The first incident of a kind has nothing to go on. Every one after it is weighed against
+            what happened to the ones before — which is the whole claim, and it is a count rather
+            than an assertion.
+          </p>
         </Card>
       ) : null}
 
-      <Card
-        title="What has actually worked"
-        sub="counts over recorded outcomes, not estimates"
-      >
-        <ActionOutcomes rows={outcomes.actions} />
-        <p className="wf-note" style={{ marginTop: 12 }}>
-          A partial recovery counts as having helped — it is a control-verified improvement that
-          did not finish the job. An intervention that had to be rolled back never counts, whatever
-          it looked like beforehand. These counts move the efficacy prior behind every future
-          decision, within a hard bound, and they cannot reach the policy gateway.
-        </p>
-      </Card>
-
-      <Card title="Incident memory" sub="newest first">
-        <MemoryTable records={records} />
-      </Card>
-
-      <div className="page-head" style={{ marginTop: 6 }}>
-        <div>
-          <h2 className="section-h" style={{ margin: 0 }}>Prevention</h2>
-          <p>
-            Patterns that have repeated often enough to be worth stopping rather than handling.
-            These are documents: approving one records the request, and merchant policy is only ever
-            changed by a person editing the policy file.
-          </p>
-        </div>
-      </div>
+      <h2 className="section-h">Prevention</h2>
+      <p className="section-p">
+        Patterns that have repeated often enough to be worth stopping rather than handling. These
+        are documents: approving one records the request, and merchant policy is only ever changed
+        by a person editing the policy file.
+      </p>
       {prevention.length ? (
         <Card>
           {prevention.map((r) => (
@@ -618,11 +477,102 @@ export function Learning({ learning, busy, onDecide }) {
         <Card>
           <Empty
             title="No recurring pattern yet"
-            body="A pattern needs at least three comparable incidents before it is worth a merchant's attention. Run the same scenario a few times from Simulate."
+            body="A pattern needs at least three comparable incidents before it is worth a merchant's attention."
           />
         </Card>
       )}
+
+      <Card title="Incident memory" sub="newest first">
+        <MemoryTable records={records} />
+      </Card>
     </>
+  )
+}
+
+/** One learned entry: what works here, what to avoid, and the evidence for both. */
+function PlaybookEntry({ entry }) {
+  return (
+    <Card
+      title={entry.label}
+      right={
+        <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {entry.seeded_incidents ? <Tag tone="mute">{entry.seeded_incidents} seeded</Tag> : null}
+          <Tag tone={entry.confident ? 'ok' : 'mute'}>
+            {entry.incidents} incident{entry.incidents === 1 ? '' : 's'}
+          </Tag>
+        </span>
+      }
+    >
+      {entry.confident ? (
+        <div className="play">
+          <div className="play-pref">
+            <span className="play-k">Preferred intervention</span>
+            <b>{readableAction(entry.preferred_action)} · {entry.preferred_band}</b>
+            <div className="facts">
+              <div className="fact"><span>Historical success</span><b>{formatPct(entry.preferred_helped_rate, 0)}</b></div>
+              <div className="fact">
+                <span>Median recovery</span>
+                <b>{entry.preferred_median_recovery_s ? formatDuration(entry.preferred_median_recovery_s) : '—'}</b>
+              </div>
+              <div className="fact"><span>Revenue protected</span><b>{formatINR(entry.revenue_protected_paise)}</b></div>
+              <div className="fact"><span>Recovery rate</span><b>{formatPct(entry.recovery_rate, 0)}</b></div>
+            </div>
+            <p className="play-note">{entry.note}</p>
+          </div>
+          {entry.avoid_band ? (
+            <div className="play-avoid">
+              <span className="play-k">Avoid</span>
+              <b>{entry.avoid_band}</b>
+              <p className="play-note">{entry.avoid_reason}</p>
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <p className="muted">{entry.note}</p>
+      )}
+
+      <details className="more">
+        <summary>Every approach tried against this failure</summary>
+        <div className="rows">
+          {entry.bands.map((b) => (
+            <div className="row outcome" key={b.band}>
+              <span className="row-main">
+                <b>{b.band}</b>
+                <span className="row-sub">
+                  {b.median_recovery_s ? `median recovery ${formatDuration(b.median_recovery_s)}` : 'no recovery time recorded'}
+                  {' · '}{formatINR(b.revenue_protected_paise)} protected
+                </span>
+              </span>
+              <span className="row-num">{b.helped}/{b.attempts} helped</span>
+              <span className="row-num dim">
+                {b.fully_recovered} fully recovered{b.rollbacks ? ` · ${b.rollbacks} rolled back` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      </details>
+    </Card>
+  )
+}
+
+function Effectiveness({ rows, keyField }) {
+  if (!rows?.length) return <p className="muted">Nothing executed yet against this dimension.</p>
+  return (
+    <div className="rows">
+      {rows.map((r) => (
+        <div className="row outcome" key={r[keyField]}>
+          <span className="row-main">
+            <b>{r[keyField]}</b>
+            <span className="row-sub">
+              {readableAction(r.best_action)}
+              {r.best_action_band !== 'any' ? ` · ${r.best_action_band}` : ''}
+            </span>
+          </span>
+          <span className="row-num">{formatPct(r.helped_rate, 0)}</span>
+          <span className="row-num dim">{formatINR(r.revenue_protected_paise)} protected</span>
+        </div>
+      ))}
+    </div>
   )
 }
 

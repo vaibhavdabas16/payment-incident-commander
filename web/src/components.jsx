@@ -494,7 +494,7 @@ export function ActionOutcomes({ rows }) {
  *
  *  The authority line is not decoration. Approving one of these records a request; it does not
  *  change the merchant's policy, and the card says so where somebody deciding will read it. */
-export function PreventionCard({ recommendation, busy, onDecide }) {
+export function PreventionCard({ recommendation, busy, onDecide, readOnly = false }) {
   const r = recommendation
   const decided = r.status !== 'PROPOSED'
   return (
@@ -522,7 +522,7 @@ export function PreventionCard({ recommendation, busy, onDecide }) {
         Advisory. Applying this means a person editing the merchant policy file — approving here
         records the request and changes nothing.
       </p>
-      {decided ? (
+      {readOnly ? null : decided ? (
         <p className="rec-p">{r.status.toLowerCase()} by {r.acknowledged_by}</p>
       ) : (
         <div className="rec-actions">

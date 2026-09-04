@@ -87,6 +87,9 @@ export const api = {
   preventionDecision: (id, decision) =>
     json(`/api/prevention/${id}/${decision}`, { method: 'POST' }),
   trace: (id) => json(`/api/incidents/${id}/trace`),
+  // Loads the deterministic seeded history, so learning has something to have learned from.
+  // Seeded records are labelled wherever they appear.
+  seedHistory: () => json('/api/demo/seed-history', { method: 'POST' }),
 }
 
 // Formats paise the way an Indian merchant reads money: lakh and crore.
@@ -123,6 +126,16 @@ export function formatFact(value, unit) {
 export function formatPct(value, digits = 1) {
   if (value === null || value === undefined) return '—'
   return `${(value * 100).toFixed(digits)}%`
+}
+
+/** Seconds as an operator reads a duration: "4m 12s", not "252". */
+export function formatDuration(seconds) {
+  if (seconds === null || seconds === undefined) return '—'
+  const s = Math.max(0, Math.round(seconds))
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ${s % 60}s`
+  return `${Math.floor(m / 60)}h ${m % 60}m`
 }
 
 export function formatClock(iso) {
