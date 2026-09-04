@@ -95,6 +95,44 @@ that must always read zero:
 
 A non-zero value in either is a failed build, not a tuning opportunity.
 
+### Revenue recovery
+The metric the merchant actually cares about, and the one most easily made to lie.
+
+- `revenue_at_risk_paise`, `revenue_protected_paise`, `revenue_recovered_paise`,
+  `revenue_lost_paise` — totals across every priced incident, in integer paise.
+- `recovery_rate` — `(protected + recovered) / at_risk`, recomputed from the totals. Never an
+  average of per-incident percentages: the arithmetic mean of percentages is not a percentage of
+  anything, and averaging would let a trivial incident that recovered perfectly cancel out a large
+  one that did not.
+- `revenue_identity_rate` — **must be 1.0**. The share of incidents where
+  `at_risk == protected + recovered + lost` exactly. Anything less means a rupee is being counted
+  twice or dropped, and every figure above it is fiction. See ADR-012.
+- `orders_recovered` / `orders_recoverable` / `orders_failed` — the second recovery layer, with a
+  denominator, so "7,100 recovered" is reported as a share of what was recoverable rather than on
+  its own.
+
+### Learning
+Whether remembering changes the decision, measured as an experiment rather than asserted.
+
+`measure_learning` runs the same failure four times against **one shared memory** — three
+like-for-like incidents and one where the obvious fix cannot work, so the record accumulates a
+failure as well as successes. Each repetition is a fresh world with its own simulator, detector and
+traffic, so the only thing carried between them is what was deliberately written to memory. If the
+prior moves, nothing else can account for it.
+
+- `history_available_rate`, `mean_comparable_incidents`, and
+  `comparable_incidents_first_run -> comparable_incidents_last_run`: whether history is actually
+  retrievable by the time it is needed.
+- `mean_efficacy_adjustment` and `max_efficacy_adjustment`: how far history moved the prior. Zero
+  here would mean memory is being retrieved and then ignored, which is the failure mode this metric
+  exists to catch. The maximum is bounded by `MAX_HISTORY_ADJUSTMENT` (0.20) by construction.
+- `policy_consulted_rate` (**must be 1.0**) and `unauthorised_executions` (**must be 0**), recorded
+  per repetition. The claim being tested is not merely "history changes the decision" but "history
+  changes the decision without touching anything that keeps the decision safe", and only the second
+  half is worth trusting the first for.
+- `prevention_recommendations`, `prevention_all_require_approval`, `prevention_none_applied`: the
+  patterns mined from the run, and the fact that none of them changed anything.
+
 ### Agent time is charged to the clock
 Agent steps advance simulated time by their real wall-clock latency. Without this the whole pipeline
 appears to complete instantaneously and time-to-mitigate reads 0.0s — flattering, and false. Real
@@ -197,19 +235,36 @@ was verified byte-identical across separate processes under different `PYTHONHAS
 hash ordering does not affect results either. One historical run reported a false-positive count of
 6 where every run before and since reports 5; that has not been explained.
 
-**Incident memory is live in the app but unmeasured by this benchmark.** The Root Cause Agent can
-take small prior nudges from resolved incidents that resemble the current one. The mechanism works
-- a query matches a stored incident at similarity 1.0 and the prior is returned - and in the
-deployed service, where a single long-lived engine handles every incident, memory accumulates
-naturally.
+**Learning is now measured, but on a very small corpus.** This used to read "incident memory is
+live in the app but unmeasured by this benchmark", and that was the honest position at the time:
+the harness built a fresh Engine per scenario so memory started empty every run, and `record()`
+fired only on closure while most runs parked at the approval gate.
 
-The harness never exercises it. It builds a fresh Engine per scenario, so memory starts empty
-every run; and `record()` fires only when an incident closes, while most park at the approval
-gate. Sharing one memory across every run changed nothing, because with 22 scored runs and few
-closures almost no run ever had a prior to draw on. So the honest position is not that memory
-helps or that it does not: at this corpus size the effect is not measurable either way, and no
-published number depends on it. Measuring it properly needs a larger corpus and a harness that
-carries memory across runs deliberately.
+Both causes are fixed. `measure_learning` carries one memory across repetitions deliberately, and
+models an operator granting up to three approvals so the incident reaches a terminal state and
+writes what it learned — an experiment about learning cannot be run on incidents that never finish.
+
+What it now shows is real but small: comparable history goes from none on the first repetition to
+one or two by the fourth, and the efficacy prior moves by a few hundredths. That is the shrinkage
+estimator behaving exactly as designed — four comparable incidents is roughly where history starts
+to weigh as much as the prior — but it means the *magnitude* of the effect here is a statement
+about a four-incident corpus, not about the mechanism at scale. The bounded-adjustment property is
+proven directly in `tests/test_learning_and_recovery.py` with sixty synthetic records, where the
+adjustment reaches and stops at the cap.
+
+Two further limits worth stating. Only the *last* executed action is recorded per incident, so an
+incident that shifted 20% and then 15% after a partial recovery is remembered as a 15% shift — the
+record is per incident, not per attempt. And the retrieval floor is a threshold, so an incident
+that sits just below it contributes nothing at all rather than contributing weakly; a graded
+weighting by similarity would be better and is not implemented.
+
+**Revenue recovery numbers depend on the recovery-probability model.** The share of already-failed
+payments that come back is measured from the retry outcomes in the merchant's own traffic where
+there are at least twenty of them for that error code, and falls back to a documented per-class
+prior otherwise (`pic/recovery/orders.py`). In the simulator most error codes fall back. The
+population figures — how many payments failed, how many are recoverable, how many the customer
+completed themselves — are exact counts over the event store; the *conversion* of an attempt into a
+recovery is the modelled part, and it is the part to be sceptical of.
 
 **`SCN-MULTI` is now diagnosed correctly, by looking again after acting.** Its second fault - an
 issuer on cards, alongside a UPI provider outage - needs roughly six minutes of traffic to become

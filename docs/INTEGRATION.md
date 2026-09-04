@@ -2,7 +2,7 @@
 
 The live demo runs a simulator: it generates its own traffic and applies its own fixes, which is
 what makes it a closed loop you can watch end to end in ninety seconds. A real deployment replaces
-both ends and **nothing in between** — the detector, the eight agents, the policy gateway and the
+both ends and **nothing in between** — the detector, the ten agents, the policy gateway and the
 evaluation harness are the same code either way.
 
 | | Demo | Your deployment |

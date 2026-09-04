@@ -1,8 +1,16 @@
 # Payment Incident Commander
 
-**Payments start failing. Eight agents detect it, work out why, price it, ask permission, act — and
-then check whether their own fix actually worked. When it did not, they undo it and hand over — with
-the reason, in the numbers they measured.**
+**An autonomous payment reliability and revenue recovery agent.** Payments start failing. It detects
+it, works out why, prices it in rupees, chooses the safest way out, asks permission, acts — then
+checks against a control group whether its own fix actually worked, goes back for the payments that
+already failed, and writes down what happened. When it did not work, it undoes it and hands over,
+with the reason in the numbers it measured.
+
+**And then the next incident goes better, because it remembers this one.**
+
+```
+OBSERVE → UNDERSTAND → INTERVENE → MEASURE → LEARN → PREVENT → OBSERVE AGAIN
+```
 
 [**Open the live system →**](https://payment-incident-commander.onrender.com)
 &nbsp;·&nbsp; [Architecture](docs/ARCHITECTURE.md)
@@ -43,6 +51,13 @@ Steps 5 and 6 are the point of the project. Acting is easy; noticing the action 
 undoing it, saying so, and leaving the person who has to finish the job something better than a
 paragraph of advice is the hard part.
 
+7. **Now run the same scenario twice more.** On the second run the Overview says *"1 of 1 comparable
+   incidents improved"* and the efficacy prior behind each option has moved. By the third, the
+   **Learning** page has a record of what has actually worked — with partial recoveries and
+   rollbacks counted separately — and a **prevention recommendation** for the pattern that keeps
+   recurring. Accept it and check `GET /api/policy` before and after: byte-identical. The most
+   valuable thing the system learns is the thing it is least able to act on alone.
+
 > The free tier sleeps after ~15 minutes idle, so the first request may take up to a minute to wake
 > it. Run it on the deterministic reasoner (the default) — it is what the benchmark uses and an
 > incident completes in seconds.
@@ -51,8 +66,14 @@ paragraph of advice is the hard part.
 
 ```bash
 pip install -r requirements.txt
-python -m pic.demo            # three live incidents, ~30s, no build step
+python -m pic.demo            # both acts, no build step
+python -m pic.demo --loop     # act two only: four incidents, one memory, ~40s
 ```
+
+Act one is three live incidents: one it fixes, one where the fix cannot work and it has to undo
+itself, and one where nothing is broken. Act two is the closed loop — four incidents against one
+shared memory, each in its own world, so the only thing carried forward is what the system chose to
+record.
 
 That drives the same supervisor, agents, tools and policy gateway the dashboard and benchmark use.
 Nothing is scripted.
@@ -86,7 +107,7 @@ see [ADR-003](docs/DECISIONS.md).
 ## Point it at your own payments
 
 The demo runs a simulator because that is what makes it watchable end to end in ninety seconds. A
-deployment replaces the two ends and **nothing in between** — same detector, same eight agents,
+deployment replaces the two ends and **nothing in between** — same detector, same ten agents,
 same policy gateway, same benchmark.
 
 ```bash
@@ -130,7 +151,7 @@ verification, policy setup, and the limits worth knowing first. Working examples
 
 ## What makes this different
 
-Most "AI for payments" demos stop at detection, or wrap an LLM around a dashboard. Four things here
+Most "AI for payments" demos stop at detection, or wrap an LLM around a dashboard. Six things here
 are load-bearing.
 
 ### 1. The LLM cannot execute anything
@@ -201,6 +222,64 @@ shadow of the first. You can see this in the investigation output:
   and both APIs expose. An escalation that ends with "contact the provider" and a closed incident
   reads as finished when the work has barely started.
 
+### 5. It learns from outcomes, and learning cannot widen its own authority
+
+Every incident that closes — resolved, escalated, rolled back or acknowledged — is priced and
+reduced to one typed `IncidentOutcomeRecord`: the failure signature, the option set, what policy
+granted, what executed at what magnitude, the treatment and control measurements, the money,
+whether it had to be reverted. Retrieval is a deterministic weighted match over those structured
+fields, so a historical claim can be recomputed and checked rather than recalled.
+
+The next incident is decided against that record. For each candidate action, the observed outcome
+at that magnitude under a comparable signature updates the action's efficacy prior:
+
+```
+blended    = (4 * prior + n * observed) / (4 + n)
+adjustment = clamp(blended - prior, ±0.20)
+```
+
+One past outcome barely moves it; a dozen consistent ones move it to the cap; nothing moves it
+further. Because several magnitudes are priced, history can argue about *size* and not only about
+*action* — *"a 20% shift worked here and a 50% one did not"* is expressible, and it changes which
+option wins on expected value.
+
+What learning **cannot** do is the part worth checking:
+
+| It can | It cannot |
+|---|---|
+| adjust an efficacy prior within ±0.20 | change a measured rupee figure |
+| add a magnitude to the priced option set | create an action outside the diagnosis's catalogue |
+| attach evidence to an option and explain it | approve, execute, or call a write tool |
+| argue for a preventive policy change | apply one |
+
+A memory containing a hundred consecutive successes at a magnitude the merchant does not permit
+still produces a clamped action, because the clamp is downstream of everything history touches.
+Asserted directly in `tests/test_learning_and_recovery.py`. And the reasoner is never given the
+chance to author a past: historical evidence is computed before the model is called and handed to it
+as structured data.
+
+### 6. Revenue is the metric, and the three figures add up
+
+```
+₹2.4L at risk  →  ₹1.2L protected  +  ₹1.1L recovered  =  93% recovery
+```
+
+`protected` is forward-looking (loss the intervention prevented, for the time it was actually in
+force). `recovered` is backward-looking (payments that had already failed and were then completed by
+the second recovery layer). `lost` is the remainder. They are disjoint by construction, so
+`at_risk = protected + recovered + lost` holds exactly — asserted per incident in the benchmark as
+`revenue_identity_rate`, which must be 1.0. A system reporting a 130% recovery rate has not had a
+good day; it has a bug.
+
+The second layer is its own capability, not a branch of diagnosis. It identifies payments that
+failed during the incident and are still completable — the failure has to be the kind a retry can
+clear, the order must not have already succeeded on its own, and the recovery probability is
+measured from retry outcomes in the merchant's own traffic. Executing it is a policy-gated write
+like any other, and a campaign needing a method the merchant withheld (a payment link reaches their
+customer) is clamped down to the methods permitted.
+
+---
+
 Overriding is worth being precise about, because "the model cannot execute anything" has to survive
 it. Only a person can call it, they must give a reason, the decision records who authorised it and
 which rules they overrode, and the action is still verified against a control group and still
@@ -238,22 +317,44 @@ Produced by `python -m pic.evaluation.harness` on the **deterministic** reasoner
 | Policy violations | **0** |
 | Unauthorised executions | **0** |
 | Tool-call success rate | 1.0 |
-| Appropriate action rate | 0.8636 |
-| Rollback success rate | 1.0 (7 attempted) |
+| Appropriate action rate | 0.8182 |
+| Rollback success rate | 1.0 (5 attempted) |
 | Escalation rate (unnecessary) | 0.7778 (0.0) |
 
 | Business impact | |
 |---|---|
-| Median absolute revenue-estimate error | 37.2% |
-| Estimates within 25% / 50% | 0.375 / 0.625 |
-| Median time to mitigate (from onset) | 134.0s |
+| Median absolute revenue-estimate error | 37.7% |
+| Estimates within 25% / 50% | 0.3333 / 0.625 |
+| Median time to mitigate (from onset) | 136.0s |
+
+| Revenue recovery | |
+|---|---|
+| Revenue at risk | ₹14.9L |
+| Protected (loss prevented) | **₹5.6L** |
+| Recovered (failed payments completed) | **₹2.6L** |
+| Lost | ₹6.7L |
+| Recovery rate | **55%** |
+| Revenue identity holds (must be 1.0) | **1.0** |
+| Failed payments recovered | 174 of 1413 recoverable, from 1786 failed |
+
+**Learning** — the same failure repeated against one shared memory, each repetition in its own simulated world. The safety columns are reported alongside, because the claim is not merely that history changes the decision but that it changes nothing which keeps the decision safe.
+
+| Learning | |
+|---|---|
+| Repetitions | 12 |
+| Records written to memory | 12 |
+| Comparable incidents, first run → last | 0 → 3 |
+| Efficacy prior moved by | mean 0.0231, max 0.0786 |
+| Policy consulted (must be 1.0) | **1.0** |
+| Unauthorised executions under learning | **0** |
+| Prevention recommendations, all advisory | 3 (True) |
 
 **Versus a human baseline** — a parameterised model of an on-call payments engineer, not a measurement. Its assumptions are stated in [docs/EVALUATION.md](docs/EVALUATION.md) and are deliberately generous to the human.
 
 | | This system | Human model | |
 |---|---|---|---|
 | Detection | 120.0s | 540s | 4.5× |
-| Mitigation | 134.0s | 1620s | 12.1× |
+| Mitigation | 136.0s | 1620s | 11.9× |
 
 <!-- BENCHMARK:END -->
 
@@ -270,9 +371,17 @@ The lifecycle every incident follows. The gate in the middle is the one an agent
 itself.
 
 ```
-OBSERVE → DETECT → INVESTIGATE → HYPOTHESIZE → DECIDE → [POLICY GATE] → ACT → VERIFY → LEARN
-                                                             │
-                                                             └─ or ESCALATE
+OBSERVE → DETECT → INVESTIGATE → HYPOTHESIZE → PLAN RECOVERY → DECIDE → [POLICY GATE] → ACT
+                                                    ▲                        │
+                                                    │                        ▼
+                                          historical evidence            VERIFY (vs control)
+                                          (advisory, bounded)                │
+                                                    │                        ▼
+                                          INCIDENT MEMORY ◀── LEARN ◀── RECOVER FAILED PAYMENTS
+                                                    │                        │
+                                                    ▼                        └─ or ESCALATE
+                                            PREVENTION (a document;
+                                             a person applies it)
 ```
 
 ![The overview, idle](docs/images/overview.png)
@@ -281,19 +390,19 @@ OBSERVE → DETECT → INVESTIGATE → HYPOTHESIZE → DECIDE → [POLICY GATE] 
                         ┌───────────────────────────┐
                         │   Incident Supervisor     │  explicit FSM, no autonomous loop
                         └─────────────┬─────────────┘
-   ┌──────────────┬───────────────────┼───────────────────┬──────────────┐
-   ▼              ▼                   ▼                   ▼              ▼
-Detection    Investigation      Business Impact       Root Cause      Decision
-   │              │                   │                   │              │
-   └──────────────┴─────────┬─────────┴───────────────────┴──────────────┘
-                            ▼
-                  ┌───────────────────┐
-                  │   TOOL REGISTRY   │  typed, audited, read-only by default
-                  └─────────┬─────────┘
-                            ▼
-                  ┌───────────────────┐
-                  │    EVENT STORE    │  payment events + baselines
-                  └───────────────────┘
+   ┌────────────┬──────────────┬──────┴───────┬──────────────────┬────────────┐
+   ▼            ▼              ▼              ▼                  ▼            ▼
+Detection  Investigation  Business Impact  Root Cause  Recovery Strategy   Decision
+   │            │              │              │                  │            │
+   └────────────┴──────┬───────┴──────────────┴────────┬─────────┴────────────┘
+                       ▼                               ▼
+             ┌───────────────────┐         ┌─────────────────────┐
+             │   TOOL REGISTRY   │         │  INCIDENT MEMORY    │  typed records,
+             └─────────┬─────────┘         └──────────┬──────────┘  deterministic retrieval
+                       ▼                              │  advisory, bounded,
+             ┌───────────────────┐                    │  never authority
+             │    EVENT STORE    │                    ▼
+             └───────────────────┘        historical evidence on each priced option
 
 Decision ──▶ POLICY GATEWAY (deterministic) ──┬── approved ──▶ Action ──▶ Verification
                                               └── refused / needs human ──▶ Escalation
@@ -350,18 +459,23 @@ pic/
   database.py         SQLAlchemy audit schema (SQLite default, Postgres compatible)
   engine.py           wires simulator + agents + supervisor together
   demo.py             the terminal demo
+  revenue.py          the incident ledger: at risk / protected / recovered / lost
   simulation/         traffic generator, control plane, scenario catalogue
   detection/          statistics + the two-tier deterministic detector
-  agents/             detection, investigation, impact, root_cause, decision,
-                      action, verification, escalation, supervisor (FSM)
+  agents/             detection, investigation, impact, root_cause, strategy,
+                      decision, action, verification, recovery, escalation,
+                      supervisor (FSM)
+  recovery/           identifying failed payments that can still be completed
   policies/           merchant_policies.yaml + the deterministic gateway
                       (rule ids are `family:name`; the families a human may override are
                       decided in agents/escalation.py, not here)
   tools/              registry, read tools, write tools
   llm/                Reasoner interface, Gemini client, deterministic fallback
-  memory/             incident memory + deterministic similarity retrieval
+  memory/             structured incident records, deterministic retrieval,
+                      merchant profile, recurring-pattern mining (prevention)
   evaluation/         the benchmark harness
   api/                FastAPI backend + WebSocket stream + /api/v1 integration API
+                      (trace.py builds the explainable decision trace)
   integration/        wire format, ingestion, HMAC signing, webhook control plane
 web/                  React dashboard (Vite)
 examples/             forward your payments in, receive actions out
@@ -388,6 +502,21 @@ docs/                 ARCHITECTURE · DECISIONS · EVALUATION · INTEGRATION · 
   degradation it caused. Rollback success is 1.0 of 7, and the remaining failed verifications are
   genuine failed interventions rather than an artefact.
 - **Nine scenarios is a small corpus.** Accuracy figures carry wide confidence intervals.
+- **Learning is measured, but on a four-incident corpus.** The benchmark repeats one failure against
+  a shared memory and reports how much comparable history was retrievable and how far it moved the
+  efficacy prior. The mechanism is demonstrably working; the *magnitude* of the effect at four
+  incidents is a statement about that corpus, not about the mechanism at scale. The bounded-
+  adjustment property is proven separately with sixty synthetic records.
+- **Memory records one action per incident, not one per attempt.** An incident that shifted 20% and
+  then 15% after a partial recovery is remembered as a 15% shift.
+- **Recovered payments are counted, not injected into the payment stream.** The population figures
+  (how many failed, how many recoverable, how many the customer completed themselves) are exact
+  counts over the event store; the conversion of an attempt into a recovery is modelled, and
+  recovered orders deliberately do not appear in the success-rate series — injecting them would
+  contaminate the control comparison the whole safety story rests on. See ADR-013.
+- **Prevention recommends and never applies.** That is deliberate (ADR-011), but it does mean the
+  loop is only closed as far as a human's inbox: the system can show that a preemptive 8% shift
+  would have saved a known amount, and cannot try it.
 - **A live deployment is single-process and in-memory.** Events live in RAM behind a six-hour
   retention window and incident history does not survive a restart, so two replicas would each see
   half a merchant's traffic and neither would hold a correct baseline. Run one instance per

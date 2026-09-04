@@ -15,22 +15,28 @@ Read it with `pic/agents/supervisor.py` open. That file is the spine.
 ## The shape of the thing
 
 ```
-  payments  ──▶  EventStore  ──▶  Detector  ──▶  Supervisor ──▶ eight agents
+  payments  ──▶  EventStore  ──▶  Detector  ──▶  Supervisor ──▶ ten agents
                                                       │              │
                                                       │              ▼
                                                       │        ToolRegistry ──▶ read tools
                                                       │              │
                                                       ▼              ▼
                                                 PolicyGateway ──▶ write tools ──▶ ControlPlane
+                                                      ▲
+                                                      │ (never crosses this line)
+                                              IncidentMemory ──▶ historical evidence
 ```
 
-Two things are load-bearing and worth holding in mind the whole way down:
+Three things are load-bearing and worth holding in mind the whole way down:
 
 - **The reasoner never executes anything.** It ranks hypotheses and proposes an action. Every path
   from a proposal to a change in the world goes through `PolicyGateway`, which is plain Python
   evaluating the merchant's YAML with no model in it.
 - **Agents never read the event store directly.** They call tools, and every call is recorded. That
   indirection is what makes "the agent did not invent this evidence" checkable rather than a claim.
+- **Memory informs and never authorises.** History moves one efficacy prior by at most ±0.20 and is
+  rendered to a human. It cannot create an action, change a rupee figure, or reach the gateway —
+  the arrow above stops where it stops on purpose (ADR-010).
 
 ---
 
@@ -46,7 +52,7 @@ There are two sources, and **everything downstream of this section is identical 
 | Acting | `simulator.control` mutates route weights | your control plane, over HTTP |
 
 Set up in `Engine.__init__` (`pic/engine.py`). The `live` flag picks the clock and the control
-plane; the detector, the eight agents, the policy gateway and the tool registry are constructed the
+plane; the detector, the ten agents, the policy gateway and the tool registry are constructed the
 same way either way. The demo, the dashboard and the benchmark all run through this one file — if
 the benchmark and the demo used different wiring, neither number would mean anything.
 
@@ -187,10 +193,44 @@ what is broken.
 
 ---
 
-## 6. Decision — expected value, and "do nothing" is a real answer
+## 6a. Recovery strategy — what could we do, and what happened last time we did it
 
-`DecisionAgent` (`pic/agents/decision.py`) chooses from a closed `ActionType` enum by expected
-value: revenue protected, weighted by confidence, against a risk score.
+`RecoveryStrategyAgent` (`pic/agents/strategy.py`) produces the closed set of options and prices
+each one. A traffic shift is priced at several magnitudes, not one, because that is what lets
+history argue about *size* and not only about *action*.
+
+For each candidate it queries `IncidentMemory` for how that action performed at that magnitude
+under a similar failure signature, and blends the observed rate into the action's efficacy prior:
+
+```python
+blended    = (4 * prior + n * observed) / (4 + n)
+adjustment = clamp(blended - prior, ±0.20)
+```
+
+One past outcome barely moves it. A dozen consistent ones move it to the cap. Nothing moves it
+further. The adjusted prior feeds expected value, and that is the whole mechanism by which learning
+changes behaviour — six lines of arithmetic, no model.
+
+The same statistics are pulled through the tool registry as `get_action_outcomes`, so the claim
+"nine of eleven comparable incidents recovered" appears in the audit trail as a recorded tool call
+rather than as an assertion.
+
+Two properties are easy to miss and both matter:
+
+- **A partial recovery is evidence the action helps.** It is reported separately as a partial, but
+  scoring it as a failure would teach the system that a control-verified improvement does not work.
+  Anything that had to be rolled back never counts as having helped.
+- **The downside of a shift grows faster than its benefit.** Benefit is linear in the traffic moved;
+  the destination-degradation risk is charged a surcharge for every point above the default size.
+  Without that, the largest permitted shift is trivially optimal every time and history could never
+  argue for a smaller one.
+
+## 6b. Decision — expected value, and "do nothing" is a real answer
+
+`DecisionAgent` (`pic/agents/decision.py`) chooses one of the priced options by expected value:
+revenue protected, weighted by the (history-adjusted) probability the fix works, against a risk
+score. It does not generate options and it does not price them — that separation is why it cannot
+invent an option that was never priced.
 
 `NO_ACTION` is a first-class proposal and reaching it is a **success**, not a failure. It is the
 correct path for a traffic-mix change, where rerouting healthy traffic would add risk and protect
@@ -298,6 +338,39 @@ help, undoing it, and leaving a person something better than a paragraph of advi
 
 ---
 
+## 10b. Recovering the payments already lost
+
+Fixing the routing stops further loss; it does nothing for the payments that failed while it was
+broken. `OrderRecoveryAgent` (`pic/agents/recovery.py`) goes after those, once, after the
+infrastructure question is settled — and not at all if the intervention had to be reverted, because
+chasing customers back into a payment stack that is still broken is not a recovery.
+
+`pic/recovery/orders.py` decides what is recoverable by three rules, each of which stops the system
+promising money it will not get: the failure has to be the kind a second attempt can clear (a
+gateway timeout, not an issuer decline); the order must not have already succeeded on its own; and
+the recovery probability is measured from retry outcomes already in the store rather than assumed.
+
+It is a policy-gated write like any other. Merchant policy says how many orders may be chased and
+by what means — `retry` and `alternate_route` happen inside the payment stack, `payment_link`
+reaches the merchant's customer — and a campaign requiring a method the merchant withheld is
+clamped down to the ones permitted rather than refused outright.
+
+## 10c. Learning — the part that makes the next incident different
+
+`IncidentSupervisor._learn` runs while the incident is in `LEARNING`, for **every** closed incident:
+resolved, escalated, rolled back or acknowledged.
+
+1. `pic/revenue.py` turns per-hour rates into what the incident actually cost and saved. Three
+   disjoint figures — protected (forward-looking), recovered (backward-looking), lost (the
+   remainder) — so `at_risk = protected + recovered + lost` holds by construction (ADR-012).
+2. `pic/memory/build.py` reduces the incident to one typed `IncidentOutcomeRecord`. Note that it is
+   handed the executed action explicitly: a rollback clears `incident.action_result`, and reading
+   that field at face value here would erase every failure from memory while keeping every success.
+3. `pic/memory/patterns.py` re-mines recurring failures and emits `PreventionRecommendation`s.
+
+A recommendation is a **document**. It has no path into the pipeline, and accepting one records who
+accepted it and changes nothing — merchant policy is a file a person owns and diffs (ADR-011).
+
 ## 11. What reaches the screen
 
 `pic/api/main.py` serves the dashboard and gives **every visitor their own simulation** — one shared
@@ -306,6 +379,12 @@ everyone else's incidents.
 
 - REST endpoints return `model_dump` of the same typed contracts the agents produced. Nothing on
   screen is written by hand.
+- `GET /api/incidents/{id}/trace` (`pic/api/trace.py`) is the explainable trace: observation,
+  evidence, hypothesis, historical evidence, candidate strategies, decision, policy check, action,
+  control group, result, revenue, failed-payment recovery, learning. Each stage carries the
+  structured evidence behind it, so every claim on screen is one click from the thing that produced
+  it. It is defined once, in Python, next to the objects it describes — a second definition in
+  JavaScript would drift, and the half that drifted would be the half a person is reading.
 - A WebSocket streams lifecycle events, with a replay buffer for clients joining mid-incident.
 - The simulation loop advances only the worlds someone is actually watching. A world with nobody
   looking at it stops, because detection costs real CPU and advancing an abandoned session steals
@@ -325,10 +404,13 @@ because it describes a five-minute window and refetching it faster only redraws 
 | Why detection is not an LLM | `pic/detection/detector.py`, then ADR-001 |
 | The safety argument | `pic/policies/gateway.py` and `ToolRegistry.call`, then ADR-002 |
 | What is actually guaranteed | `tests/test_safety_invariants.py` |
+| How learning works, and what it cannot do | `pic/memory/store.py`, `pic/agents/strategy.py`, then ADR-010 |
+| Why the money adds up | `pic/revenue.py`, then ADR-012 |
 | Whether the numbers are real | `pic/evaluation/harness.py`, then [EVALUATION](EVALUATION.md) |
 
 ```bash
-python -m pic.demo                  # three incidents end to end, ~30s
+python -m pic.demo                  # the full narrative: three incidents, then the closed loop
+python -m pic.demo --loop           # just the closed loop: four incidents, one memory
 python -m pic.evaluation.harness    # the benchmark every published number comes from
-python -m pytest -q                 # 78 tests
+python -m pytest -q                 # 135 tests
 ```

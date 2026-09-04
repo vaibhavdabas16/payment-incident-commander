@@ -9,11 +9,19 @@ one that looks good on a projector.
 
 ```bash
 pip install -r requirements.txt
-python -m pic.demo
+python -m pic.demo            # both acts
+python -m pic.demo --loop     # act two only, if you are short of time
 ```
 
-Three scenarios run back to back against live simulated traffic. Nothing is scripted: the same
-supervisor, agents, tools and policy gateway that the API and the benchmark use.
+Two acts, back to back against live simulated traffic. Nothing is scripted: the same supervisor,
+agents, tools and policy gateway that the API and the benchmark use.
+
+**Act one — can it be trusted with a payment system?** Three incidents: one it fixes, one where the
+fix cannot work and it has to notice and undo its own change, and one where nothing is broken and
+the right answer is to do nothing.
+
+**Act two — does it get better?** Four incidents against one shared memory. This is the act that
+demonstrates the actual product claim, and it is the one to run if you only have two minutes.
 
 Use `--pace 0` to run it instantly, or `--pace 1.2` to let it breathe while you narrate.
 
@@ -93,6 +101,46 @@ The headline success rate falls. **No incident opens.** Rerouting healthy traffi
 risk and protect no revenue, and the system's willingness to do nothing is a feature — it is the
 false-positive control in the benchmark.
 
+### Act two — the agent gets better because it remembers
+
+Four incidents, each in its own simulated world with its own traffic, sharing one incident memory.
+The only thing carried between them is what was deliberately written when the previous one closed,
+so if the later ones behave differently, nothing else can account for it.
+
+| | What happens | What to point at |
+|---|---|---|
+| **1** | A UPI PSP degrades. Nothing in memory. | *"No comparable incidents in memory yet; this decision rests on live evidence alone."* This is the baseline. |
+| **2** | The same failure pattern. | The historical recommendation appears, quoting the first incident. The efficacy prior moves — `prior +0.03` next to each option. |
+| **3** | Looks the same, but every route is degraded, so the reroute cannot work. | It acts, measures against the control, reverts its own change — and the failure goes into the record. Watch `learned REGRESSED -> memory`. |
+| **4** | The same pattern again, now against a mixed record. | The prior has gone *negative*. The system is arguing from its own failures as well as its successes. |
+
+Then the summary:
+
+```
+WHAT THE SYSTEM NOW KNOWS
+  incidents remembered        4
+  revenue at risk across them INR 6.2L
+  protected                   INR 2.3L
+  recovered                   INR 1.9L
+  recovery rate               68%
+  shift_traffic moderate      3/4 helped, 1 rolled back
+
+PREVENTION RECOMMENDATION
+  upi · psp_axis · PSP_UNAVAILABLE has degraded 3 times between 10:00 and 11:00 UTC.
+    when p95 latency up at least ...
+    when a healthy destination route was available in 3 of 3 cases
+  proposes            shift_traffic 8% route_A -> route_C for upi
+  historical loss     INR 64,117
+  estimated benefit   INR 64,117
+  authority           merchant approval required - policy is unchanged
+```
+
+The last line is the one worth dwelling on. The most valuable thing the system has learned is the
+thing it is least able to act on alone.
+
+*(Figures are from one run at the shipped seeds; yours will differ slightly with the traffic
+sampling. Every one of them is arithmetic over measurements the agents actually took.)*
+
 ---
 
 ## Things worth pointing at
@@ -114,6 +162,27 @@ produces no actionable diagnosis.
 **Incident correlation.** Leave the dashboard running through a long scenario. One fault stays one
 incident, with a correlated-detection count, rather than opening a new one every monitoring cycle.
 
+**The money adds up.** On the Overview, the bar under the headline has three segments — protected,
+recovered, lost — and they sum to the revenue at risk exactly. That identity is asserted per
+incident in the benchmark (`revenue_identity_rate`, which must be 1.0), because a system reporting
+a 130% recovery rate has not had a good day, it has a bug.
+
+**The decision trace.** Open any incident and scroll to *Decision trace*. Every stage can be
+expanded: the findings and the tool that produced each one, every hypothesis with what argues
+against it, the comparable incidents the decision was weighed against, every option that was priced
+with its historical support, and every policy rule the gateway evaluated. Nothing on that page is a
+sentence without working behind it.
+
+**The Learning page.** Run the same scenario three or four times from Simulate and the page fills
+in: the incident memory, what has actually worked (with partials and rollbacks counted separately),
+and eventually a prevention recommendation. Click *Record as accepted* and check `GET /api/policy`
+before and after — it is byte-identical. The card says so, and it is true.
+
+**Recovering what was already lost.** The trace's *Failed-payment recovery* stage reports the whole
+population: how many payments failed, how many were still recoverable, how many were attempted, and
+how many came back. Note the line about payment links — the merchant has not authorised that method
+for autonomous use, so those orders are counted as recoverable and deliberately not attempted.
+
 **The benchmark panel** at the bottom of the dashboard reads `evaluation/results/latest.json`. If it
 says no results, run `python -m pic.evaluation.harness`. The dashboard never renders a number the
 harness did not produce.
@@ -133,4 +202,14 @@ seconds of wall clock at 60× speed. `SCN-TRAFFIC-MIX` is *supposed* to produce 
 
 **A Gemini key is set and calls are failing** — the system falls back to the deterministic reasoner
 automatically and keeps running; the event stream shows `reasoner_degraded`. Benchmarks pin the
-deterministic reasoner regardless, so results are unaffected.
+deterministic reasoner regardless, so results are unaffected. Act two of the demo also pins it
+deliberately: the claim being made is that behaviour changed *because of what the system
+remembered*, and that is only legible if everything else is held constant.
+
+**Act two shows "no recurring pattern yet"** — a pattern needs at least three comparable incidents
+before it is worth a merchant's attention. If one of the four repetitions did not open an incident
+(traffic sampling), you get three records and no pattern. Re-run it.
+
+**The Learning page is empty** — memory is per visitor and is cleared by Reset, deliberately: what
+the system learned belongs to the incidents Reset is clearing, and leaving it would judge the next
+incident against history from a world that no longer exists.

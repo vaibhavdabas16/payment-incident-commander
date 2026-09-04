@@ -130,3 +130,105 @@ incidents that are still live.
 
 **Trade-off.** Needs sufficient post-window volume; with too few transactions the agent returns
 `INCONCLUSIVE` and holds the incident open rather than guessing.
+
+---
+
+### ADR-010 — Memory is written and queried only by code, and its influence is hard-capped
+
+**Context.** The system now decides partly on the basis of what happened last time. That creates a
+new and serious failure mode: an agent that can *recall* a past incident can *invent* one, and a
+fabricated precedent is far more dangerous than a fabricated observation. "Nine of eleven similar
+incidents recovered with a 20% reroute" is exactly the kind of sentence a language model produces
+fluently and cannot be held to.
+
+**Decision.**
+
+1. The only writer of memory is `pic/memory/build.py::build_outcome_record`, which copies fields
+   from typed agent outputs. No model is on that path.
+2. Retrieval is a deterministic weighted match over a structured `FailureSignature`. No model is on
+   that path either.
+3. Historical evidence is computed *before* the reasoner is called and handed to it as structured
+   data. The model may weigh and explain it; it cannot add to it.
+4. What history is permitted to do is move one number: the efficacy prior of a candidate action,
+   through a shrinkage estimator, clamped to ±`MAX_HISTORY_ADJUSTMENT` (0.20). It cannot change a
+   measured rupee figure, create an action, widen a policy limit, or reach the gateway.
+
+**Consequences.** A hundred consecutive historical successes at a magnitude the merchant does not
+permit still produce a clamped action, because the clamp is downstream of everything history
+touches. The cap also means the first incident that looks familiar but is not cannot be
+confidently mishandled: memory tilts a close call, it does not decide.
+
+The alternative — letting retrieved outcomes set `p_success` directly — was rejected because it
+makes the system's behaviour a function of its most recent luck. Two lucky outcomes would move an
+efficacy prior from 0.85 to 1.0 and the agent would stop pricing the downside at all.
+
+Asserted in `tests/test_learning_and_recovery.py`, section *Safety under learning*.
+
+---
+
+### ADR-011 — Prevention recommends; it never applies
+
+**Context.** Once the system can see that PSP Axis degrades at the same time every evening and has
+cost a known number of rupees, the obvious next step is to act on it preemptively. That is also the
+point at which an agent would be modifying its own standing authority.
+
+**Decision.** Pattern mining emits a `PreventionRecommendation`, which is a document: the pattern,
+its conditions, the incidents behind it, the money it has cost, the action that has actually worked
+against it, and an estimated benefit derived from both. It has no path into the pipeline. Merchant
+policy lives in `pic/policies/merchant_policies.yaml` and is changed by a person editing that file.
+
+`POST /api/prevention/{id}/accept` records who accepted it and returns `policy_changed: false`. The
+dashboard card says the same thing where somebody deciding will read it.
+
+**Consequences.** The most valuable thing the system learns is the thing it is least able to act on
+alone, and that is the correct trade. A merchant's standing grant of authority is the one artefact
+in the system that must only ever move deliberately, in a file a human owns and can diff.
+
+We also decline to recommend prevention for a pattern the system has never actually fixed, or for
+one whose incidents were false positives. A scheduled reroute against a traffic-mix change is not
+prevention, it is harm on a timer.
+
+---
+
+### ADR-012 — The three revenue figures are disjoint by construction
+
+**Context.** Revenue recovery is the headline business metric, so the way it can most easily be
+wrong is by counting the same rupee twice — once as loss prevented and once as revenue recovered.
+A system reporting a 130% recovery rate has not had a good day; it has a bug.
+
+**Decision.** `revenue_protected` is forward-looking (loss the intervention prevented, for the time
+it was actually in force), `revenue_recovered` is backward-looking (payments that had already failed
+and were then completed), and `revenue_lost` is the remainder. Each per-hour rate is applied only to
+the seconds it was measured over. The identity
+
+```
+revenue_at_risk = revenue_protected + revenue_recovered + revenue_lost
+```
+
+holds by construction, is enforced by a cap-and-rescale in `pic/revenue.py`, and is asserted per
+incident in the benchmark as `revenue_identity_rate` (which must be 1.0).
+
+**Consequences.** An incident that was never priced reports `measurable: false` and zeroes rather
+than an estimate. Portfolio rates are recomputed from totals rather than averaged, because the
+arithmetic mean of percentages is not a percentage of anything.
+
+---
+
+### ADR-013 — Recovered orders are counted, not injected into the payment stream
+
+**Context.** The second recovery layer re-presents payments that already failed. The obvious
+implementation is to write the resulting attempts into the event store as new payment events.
+
+**Decision.** It does not. A recovery campaign's outcomes are recorded against the campaign, in the
+control plane, and never appear as rows in the payment stream.
+
+**Consequences.** This is a deliberate limit on the simulation, and the reason is verification: the
+Verification Agent measures the success rate of traffic on the treated and control routes, and
+injecting a batch of retried payments — all of them from the failed population, none of them
+subject to the routing split — would contaminate exactly the measurement the whole safety story
+rests on. A recovered order is reported as a recovered order and as rupees in the ledger, which is
+what it is.
+
+The honest cost: recovered payments do not appear in the merchant's headline success-rate chart. In
+a real deployment they would arrive through the normal payment path and be measured like any other
+payment; here the boundary is drawn where it keeps the experiment clean.
