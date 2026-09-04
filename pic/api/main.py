@@ -410,9 +410,11 @@ _AGENT_SUMMARY = {
     "investigation": "Pulls evidence from read-only tools and separates real second faults from echoes of the first.",
     "impact": "Prices the degradation per hour over a disjoint traffic partition, showing every step of the derivation.",
     "root_cause": "Scores hypotheses from the evidence, then lets the reasoner re-rank - never invent - and cites findings.",
+    "recovery_strategy": "Prices every way out and attaches what happened last time each one was tried.",
     "decision": "Chooses an action by expected value, and may propose doing nothing.",
     "action": "The only agent that can call a write tool, and only with a policy decision naming that exact action.",
     "verification": "Measures the action against a concurrent control group and reports honestly when it did not work.",
+    "order_recovery": "Goes after the payments that already failed, under its own policy decision.",
     "escalation": "Hands the incident to a human with the evidence and the reason it stopped.",
 }
 
@@ -482,9 +484,11 @@ def agents() -> dict[str, Any]:
         s.investigation_agent,
         s.impact_agent,
         s.root_cause_agent,
+        s.strategy_agent,
         s.decision_agent,
         s.action_agent,
         s.verification_agent,
+        s.order_recovery_agent,
         s.escalation_agent,
     ]
     return {
@@ -493,9 +497,9 @@ def agents() -> dict[str, Any]:
                 "name": a.name,
                 "state": a.state.value,
                 "timeout_s": a.timeout_s,
-                # Only the Action Agent holds a write capability, and the tool registry refuses it
-                # without an approving policy decision.
-                "writes": a.name == "action",
+                # Two agents hold a write capability, and the tool registry refuses both of them
+                # without an approving policy decision naming that exact action.
+                "writes": a.name in ("action", "order_recovery"),
                 "summary": _AGENT_SUMMARY.get(a.name, ""),
             }
             for a in ordered
@@ -709,9 +713,80 @@ def control(command: str, speedup: float | None = None) -> dict[str, Any]:
         # Notifications and tickets are the audit surface of incidents that no longer exist.
         engine.tool_context.notifications.clear()
         engine.tool_context.tickets.clear()
+        # What the system learned belongs to the incidents that are being cleared. Leaving it
+        # would mean the next incident after a Reset is judged against history from a world that
+        # no longer exists - and the closed-loop demo could never be run twice from a clean start.
+        engine.memory.clear()
+        engine.supervisor.prevention.clear()
+        engine.supervisor._prevention_status.clear()
+        engine.supervisor._recovery_attempted.clear()
     else:
         raise HTTPException(status_code=400, detail=f"unknown command {command}")
     return {"running": sess().running, "speedup": sess().speedup}
+
+
+@app.get("/api/learning")
+def learning() -> dict[str, Any]:
+    """What the system has learned, and what it wants to prevent next.
+
+    Every record here was written by the supervisor at the close of a real incident in this
+    session. Nothing on this endpoint is generated for display.
+    """
+    return eng().learning_summary()
+
+
+@app.get("/api/prevention")
+def prevention() -> dict[str, Any]:
+    """Recurring-failure patterns and the preventive changes they argue for.
+
+    Advisory. Merchant policy is `pic/policies/merchant_policies.yaml`, and nothing reachable from
+    this API can change it (ADR-011).
+    """
+    return {
+        "recommendations": eng().prevention(),
+        "policy_authority": (
+            "Recommendations are documents. Applying one means a person editing the merchant "
+            "policy file; approving here records the request and changes nothing."
+        ),
+    }
+
+
+@app.post("/api/prevention/{recommendation_id}/{decision}")
+def prevention_decision(
+    recommendation_id: str, decision: str, who: str = "operator"
+) -> dict[str, Any]:
+    """Record a person's decision on a preventive recommendation. Never applies it."""
+    if decision not in ("accept", "dismiss"):
+        raise HTTPException(status_code=400, detail="decision must be accept or dismiss")
+    try:
+        recommendation = eng().supervisor.acknowledge_prevention(
+            recommendation_id, who=who, accept=decision == "accept"
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "recommendation": recommendation.model_dump(mode="json"),
+        "policy_changed": False,
+        "note": (
+            "Recorded. Merchant policy is unchanged: applying this means editing "
+            "pic/policies/merchant_policies.yaml."
+        ),
+    }
+
+
+@app.get("/api/incidents/{incident_id}/trace")
+def incident_trace(incident_id: str) -> dict[str, Any]:
+    """The decision trace: observation to learning, one step at a time.
+
+    Each stage carries the structured evidence behind it, so every claim on screen can be opened
+    and checked against the thing that produced it rather than taken on trust.
+    """
+    from .trace import build_trace
+
+    for incident in eng().incidents():
+        if incident.incident_id == incident_id:
+            return build_trace(incident)
+    raise HTTPException(status_code=404, detail=f"unknown incident {incident_id}")
 
 
 @app.get("/api/notifications")
