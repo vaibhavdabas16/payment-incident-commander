@@ -143,6 +143,42 @@ sampling. Every one of them is arithmetic over measurements the agents actually 
 
 ---
 
+## The dashboard, in the order it argues
+
+The incident page is one argument told top to bottom, and the order is the point:
+
+```
+revenue at risk → what is breaking → why → what the agent will do → why that
+  → what happens if it is wrong → it ran → did it work → how much came back
+  → what it learned → how to prevent it → (the agent trace, collapsed, last)
+```
+
+The agent trace is still there and still complete. It is last and collapsed because a merchant
+opens this page because money is going missing, not to audit a pipeline — the trace is the evidence
+for the story rather than the story.
+
+**Before demoing learning, load the seeded history.** Overview → *Load demo history*, or the button
+on the Learning page, or `POST /api/demo/seed-history`. It adds fourteen records describing the same
+failure `SCN-UPI-PSP` produces, so the next incident of that kind retrieves them on merit — the
+historical figures on the recommendation come from a genuine signature match, not a special case.
+Every seeded record is labelled `seeded` wherever it appears, and the Learning page says how many of
+what it remembers were seeded rather than measured.
+
+With them loaded, run `SCN-UPI-PSP` and the recommendation reads:
+
+```
+AGENT RECOMMENDATION
+Shift 20% of upi traffic from route_A to route_C
+
+Expected revenue protected   Confidence   Risk   Historical success
+₹7.9L/hour                   65%          Low    8 / 9 comparable incidents improved
+```
+
+...and the option table shows the 15% alternative it was chosen over, with the same history
+attached to both.
+
+---
+
 ## Things worth pointing at
 
 **The clamp.** Trigger a scenario and look at the policy stage. When a proposal exceeds a merchant
@@ -173,10 +209,18 @@ against it, the comparable incidents the decision was weighed against, every opt
 with its historical support, and every policy rule the gateway evaluated. Nothing on that page is a
 sentence without working behind it.
 
-**The Learning page.** Run the same scenario three or four times from Simulate and the page fills
-in: the incident memory, what has actually worked (with partials and rollbacks counted separately),
-and eventually a prevention recommendation. Click *Record as accepted* and check `GET /api/policy`
-before and after — it is byte-identical. The card says so, and it is true.
+**The Learning page.** With the seeded history loaded it opens on a learned playbook: the
+preferred intervention for this failure, its success rate and median recovery, and the approach to
+avoid with the reason. Below that, the most effective action by payment method and by provider, and
+a count of how many incidents were decided with comparable history already on the record — which is
+the whole claim, as a count rather than an assertion. Click *Record as accepted* on a prevention
+recommendation and check `GET /api/policy` before and after: byte-identical. The card says so, and
+it is true.
+
+**The verification panel.** The strongest thing the system does, given the space it earns: the
+control group and the treatment group side by side, the difference in percentage points, the
+p-value, and the sample on each side. A badge saying "verified" would be worth nothing; two numbers
+and the sentence explaining why the untouched group exists is worth something.
 
 **Recovering what was already lost.** The trace's *Failed-payment recovery* stage reports the whole
 population: how many payments failed, how many were still recoverable, how many were attempted, and

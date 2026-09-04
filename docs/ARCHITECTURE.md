@@ -308,7 +308,7 @@ Output quotes the rule that bound it:
 | `tool_calls` | every tool invocation with args, latency, ok/error |
 | `policy_decisions` | every gateway evaluation, approved or not |
 | `audit_records` | every executed action and its result |
-| `incident_memory` | one row per learned incident: merchant, signature, action, outcome, money, plus the full structured record as JSON |
+| `incident_memory` | one row per learned incident: merchant, signature, action, outcome, money, plus the full structured record as JSON (including whether it was seeded) |
 | `prevention_recommendations` | recurring patterns and who, if anyone, acknowledged them. Stored, never applied |
 | `ground_truth` | injected scenario labels, used by the evaluation harness only |
 
@@ -426,7 +426,40 @@ few to measure.
 Execution is a policy-gated write like any other. Recovered orders are counted as recovered orders
 and **not** injected into the payment stream — see ADR-013.
 
-### 9.7 Prevention
+### 9.7 The learned playbook
+
+`pic/memory/playbook.py` is the between-incidents view: per failure signature, the intervention
+that has actually worked, its success rate, median recovery and revenue protected, and — where the
+evidence separates one — the approach to avoid and why.
+
+It is a **read-only projection**. The strategy layer queries `store.py` directly, so nothing in the
+playbook sits on the path from a proposal to an execution; deleting the file would leave the
+agent's behaviour identical and only darken the Learning page. A test asserts that no module on the
+decision path imports it.
+
+Two rules keep it honest. It names a preferred approach only above `MIN_EVIDENCE` comparable
+incidents, and it advises *against* an approach only when that approach is both measurably worse
+and has failed more than once — at four attempts a single differing outcome is a 25-point rate gap,
+and telling a merchant to avoid something on the strength of one bad day is the kind of confident
+nonsense that makes an operator stop reading.
+
+### 9.8 Seeded demo history
+
+Learning is invisible until there is something to have learned from, and running a dozen incidents
+live takes longer than anyone watching a demo will wait. `pic/simulation/seed_memory.py` loads a
+fixed population of `IncidentOutcomeRecord`s, and **every one carries `seeded=True`**, which travels
+into every query, aggregate and screen that renders it.
+
+What makes them a fixture rather than fake data: they describe the same failure `SCN-UPI-PSP`
+actually produces, so a live incident retrieves them because the signature genuinely matches; they
+obey the same revenue identity a measured record does, so they cannot express an outcome a real
+incident could not; and the pattern they encode — moderate shifts work here, large ones regress —
+is stated as data rather than asserted in prose.
+
+`POST /api/demo/seed-history` loads them. It touches no payment stream, no control plane and no
+policy.
+
+### 9.9 Prevention
 
 `pic/memory/patterns.py` groups records by failure signature and reports the ones that recur at
 least three times, with the conditions they shared, the money they have cost, and the action that

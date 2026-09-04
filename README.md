@@ -51,7 +51,12 @@ Steps 5 and 6 are the point of the project. Acting is easy; noticing the action 
 undoing it, saying so, and leaving the person who has to finish the job something better than a
 paragraph of advice is the hard part.
 
-7. **Now run the same scenario twice more.** On the second run the Overview says *"1 of 1 comparable
+7. **Load the demo history** (Overview → *Load demo history*) and run it again. The
+   recommendation now reads *"8 / 9 comparable incidents improved"* and the option table shows the
+   alternative it was chosen over, with the same history attached. Those records are labelled
+   `seeded` everywhere they appear — they describe the same failure the scenario produces, so the
+   match is on merit, but they were not measured in your session.
+8. **Or run the same scenario twice more without seeding.** On the second run the Overview says *"1 of 1 comparable
    incidents improved"* and the efficacy prior behind each option has moved. By the third, the
    **Learning** page has a record of what has actually worked — with partial recoveries and
    rollbacks counted separately — and a **prevention recommendation** for the pattern that keeps
@@ -460,7 +465,8 @@ pic/
   engine.py           wires simulator + agents + supervisor together
   demo.py             the terminal demo
   revenue.py          the incident ledger: at risk / protected / recovered / lost
-  simulation/         traffic generator, control plane, scenario catalogue
+  simulation/         traffic generator, control plane, scenario catalogue,
+                      seeded demo history (every record flagged and labelled)
   detection/          statistics + the two-tier deterministic detector
   agents/             detection, investigation, impact, root_cause, strategy,
                       decision, action, verification, recovery, escalation,
@@ -472,12 +478,15 @@ pic/
   tools/              registry, read tools, write tools
   llm/                Reasoner interface, Gemini client, deterministic fallback
   memory/             structured incident records, deterministic retrieval,
-                      merchant profile, recurring-pattern mining (prevention)
+                      merchant profile, recurring-pattern mining (prevention),
+                      and the learned playbook (a read-only view, off the decision path)
   evaluation/         the benchmark harness
   api/                FastAPI backend + WebSocket stream + /api/v1 integration API
                       (trace.py builds the explainable decision trace)
   integration/        wire format, ingestion, HMAC signing, webhook control plane
-web/                  React dashboard (Vite)
+web/                  React dashboard (Vite). Incident.jsx is the incident story:
+                      revenue → cause → recommendation → why → exposure → options →
+                      verification → money → learning → prevention → trace
 examples/             forward your payments in, receive actions out
 tests/                safety invariants, detection quality, end-to-end lifecycles, integration
 docs/                 ARCHITECTURE · DECISIONS · EVALUATION · INTEGRATION · DEMO
