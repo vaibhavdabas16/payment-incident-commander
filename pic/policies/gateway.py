@@ -35,6 +35,18 @@ from ..schemas import (
     RootCauseAssessment,
 )
 
+# Actions that count against the per-incident attempt cap: the ones that change how *future*
+# payments are processed. Recovering payments that already failed is not another attempt at the
+# fix - it re-presents past orders and alters no configuration - so counting it here would let a
+# mop-up exhaust the budget the merchant set aside for actually fixing the fault.
+ATTEMPT_COUNTING_ACTIONS = {
+    ActionType.SHIFT_TRAFFIC,
+    ActionType.DISABLE_PAYMENT_METHOD,
+    ActionType.CONFIGURE_RETRY,
+    ActionType.ROLLBACK_CHANGE,
+    ActionType.RESTORE_CHANGE,
+}
+
 # Ordered most-restrictive first, so `min` over this ranking picks the binding outcome.
 _SEVERITY_ORDER = {
     PolicyOutcome.DENY: 0,
@@ -73,8 +85,12 @@ class InterventionHistory:
     def record_execution(
         self, incident_id: str, at: datetime, action: ActionType, params: dict[str, Any]
     ) -> None:
+        # Every write counts against the hourly throttle, because every write touches the
+        # merchant's payment stack. Only configuration-changing ones count as an *attempt at the
+        # fix*; see ATTEMPT_COUNTING_ACTIONS.
         self.executed_at.append(at)
-        self.attempts[incident_id] = self.attempts.get(incident_id, 0) + 1
+        if action in ATTEMPT_COUNTING_ACTIONS:
+            self.attempts[incident_id] = self.attempts.get(incident_id, 0) + 1
         if action is ActionType.SHIFT_TRAFFIC:
             src = str(params.get("from_route"))
             shifted = self.cumulative_shift_pct.setdefault(incident_id, {})
@@ -165,8 +181,9 @@ class PolicyGateway:
         results.append(self._rule_confidence(anomaly, root_cause))
         results.append(self._rule_expected_value(proposal))
         results.append(self._rule_risk(proposal))
-        results.extend(self._rule_rate_limits(proposal.incident_id, now))
+        results.extend(self._rule_rate_limits(proposal, now))
         results.append(self._rule_routing(proposal, granted, route_health))
+        results.extend(self._rule_order_recovery(proposal, granted))
 
         binding = min(results, key=lambda r: _SEVERITY_ORDER[r.outcome])
         outcome = binding.outcome
@@ -378,9 +395,10 @@ class PolicyGateway:
             )
         return RuleResult("risk:max_autonomous_risk_score", PolicyOutcome.APPROVE, "acceptable risk")
 
-    def _rule_rate_limits(self, incident_id: str, now: datetime) -> list[RuleResult]:
+    def _rule_rate_limits(self, proposal: ActionProposal, now: datetime) -> list[RuleResult]:
         out: list[RuleResult] = []
         limits = self.rate_limits
+        incident_id = proposal.incident_id
 
         per_hour = int(limits.get("max_autonomous_actions_per_hour", 999))
         used = self.history.actions_in_last_hour(now)
@@ -407,9 +425,13 @@ class PolicyGateway:
                 )
             )
 
+        # The attempt cap means "stop trying to fix it", not "stop doing anything". It is counted
+        # over, and enforced against, configuration-changing actions only — otherwise an incident
+        # that used both its attempts could never go back for the payments it had already lost,
+        # which is the one thing left worth doing at that point.
         max_attempts = int(limits.get("max_intervention_attempts", 2))
         attempts = self.history.attempts_for(incident_id)
-        if attempts >= max_attempts:
+        if proposal.action in ATTEMPT_COUNTING_ACTIONS and attempts >= max_attempts:
             out.append(
                 RuleResult(
                     "rate_limit:max_intervention_attempts",
@@ -422,6 +444,76 @@ class PolicyGateway:
         if not out:
             out.append(
                 RuleResult("rate_limit:none_binding", PolicyOutcome.APPROVE, "within rate limits")
+            )
+        return out
+
+    def _rule_order_recovery(
+        self, proposal: ActionProposal, granted: dict[str, Any]
+    ) -> list[RuleResult]:
+        """Bound the second recovery layer: how many orders, and by which means.
+
+        Recovering a failed payment is not the same kind of act as moving traffic. A retry happens
+        inside the payment stack; a payment link reaches the merchant's customer. The merchant
+        decides which of those the agent may do on its own, and the campaign is clamped down to
+        that rather than refused, so an over-ambitious campaign still recovers the orders it was
+        allowed to.
+        """
+        if proposal.action is not ActionType.RECOVER_FAILED_PAYMENTS:
+            return [
+                RuleResult(
+                    "recovery:not_applicable", PolicyOutcome.APPROVE, "not a recovery action"
+                )
+            ]
+
+        out: list[RuleResult] = []
+        recovery = self.policy.get("recovery", {}) or {}
+        allowed_methods = list(recovery.get("autonomous_methods", []) or [])
+        requested_methods = list(granted.get("methods") or allowed_methods)
+
+        refused = [m for m in requested_methods if allowed_methods and m not in allowed_methods]
+        if refused:
+            permitted = [m for m in requested_methods if m in allowed_methods]
+            granted["methods"] = permitted
+            if not permitted:
+                out.append(
+                    RuleResult(
+                        "recovery:autonomous_methods",
+                        PolicyOutcome.REQUIRE_APPROVAL,
+                        f"recovery methods {', '.join(sorted(refused))} need a human; the merchant "
+                        "has authorised none of the methods this campaign requires",
+                    )
+                )
+            else:
+                out.append(
+                    RuleResult(
+                        "recovery:autonomous_methods",
+                        PolicyOutcome.APPROVE_WITH_CLAMP,
+                        f"recovery methods {', '.join(sorted(refused))} are not authorised for "
+                        f"autonomous use and were dropped from the campaign",
+                        {"methods": permitted},
+                    )
+                )
+        else:
+            granted["methods"] = requested_methods
+
+        limit = int(self.bounds.get("max_recovery_payments", 0) or 0)
+        orders = granted.get("orders")
+        if limit and isinstance(orders, list) and len(orders) > limit:
+            granted["orders"] = orders[:limit]
+            out.append(
+                RuleResult(
+                    "bound:max_recovery_payments",
+                    PolicyOutcome.APPROVE_WITH_CLAMP,
+                    f"campaign of {len(orders)} orders exceeds the merchant limit of {limit}",
+                    {"orders": limit},
+                )
+            )
+
+        if not out:
+            out.append(
+                RuleResult(
+                    "recovery:within_limits", PolicyOutcome.APPROVE, "recovery within merchant limits"
+                )
             )
         return out
 

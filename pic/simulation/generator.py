@@ -127,6 +127,10 @@ class ControlPlane:
     # recorded change stops applying once that change is rolled back, so reverting a bad deploy
     # actually fixes the thing it broke.
     rolled_back_changes: set[str] = field(default_factory=set)
+    # Order-recovery campaigns, keyed by id. Kept here rather than in the event store because a
+    # recovered order is not a new payment attempt in the merchant's stream, and injecting it as
+    # one would corrupt the very success-rate series verification is measuring.
+    recovery_campaigns: dict[str, dict] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.route_weights:
@@ -196,6 +200,82 @@ class ControlPlane:
         self.rolled_back_changes.discard(change_id)
         return {"change_id": change_id, "restored": True}
 
+    # ------------------------------------------------- order recovery layer
+
+    def recover_payments(
+        self, campaign_id: str, orders: list[dict], methods: list[str] | None = None
+    ) -> dict:
+        """Re-present failed payments and report which of them actually completed.
+
+        Outcomes are drawn per order from a generator seeded on `(campaign_id, order_id)`, so the
+        result is reproducible for a given seed and independent of the payment stream's own RNG —
+        running a recovery campaign does not perturb the traffic the Verification Agent is
+        measuring, which it would if these were injected as new payment events.
+
+        That separation is deliberate and is the boundary of the simulation: recovered payments are
+        counted as recovered orders, not as new rows in the payment stream. See
+        `docs/ARCHITECTURE.md` on what this layer does and does not model.
+        """
+        allowed = set(methods or [])
+        attempted = 0
+        recovered = 0
+        recovered_value = 0
+        attempted_value = 0
+        by_method: dict[str, int] = {}
+        skipped: dict[str, int] = {}
+
+        for order in orders:
+            method = str(order.get("recovery_method", "retry"))
+            if allowed and method not in allowed:
+                skipped[method] = skipped.get(method, 0) + 1
+                continue
+            amount = int(order.get("amount_paise", 0))
+            probability = float(order.get("recovery_probability", 0.0))
+            attempted += 1
+            attempted_value += amount
+            rng = random.Random(f"{campaign_id}:{order.get('order_id')}")
+            if rng.random() < probability:
+                recovered += 1
+                recovered_value += amount
+                by_method[method] = by_method.get(method, 0) + 1
+
+        campaign = {
+            "campaign_id": campaign_id,
+            "attempted": attempted,
+            "recovered": recovered,
+            "attempted_value_paise": attempted_value,
+            "recovered_value_paise": recovered_value,
+            "by_method": by_method,
+            "skipped_by_method": skipped,
+            "cancelled": False,
+        }
+        self.recovery_campaigns[campaign_id] = campaign
+        return dict(campaign)
+
+    def cancel_recovery(self, campaign_id: str) -> dict:
+        """Stop a recovery campaign.
+
+        The honest inverse of `recover_payments`, and its limits are stated rather than glossed:
+        it halts any further attempts and marks the campaign cancelled. It cannot un-charge a
+        payment a customer has already completed, because nothing can — that money is in the
+        merchant's account and reversing it would be a refund, not a rollback. What it guarantees
+        is that the campaign stops and that the audit trail says when.
+        """
+        campaign = self.recovery_campaigns.get(campaign_id)
+        if campaign is None:
+            return {"campaign_id": campaign_id, "cancelled": True, "known": False}
+        campaign["cancelled"] = True
+        return {
+            "campaign_id": campaign_id,
+            "cancelled": True,
+            "known": True,
+            "already_recovered": campaign["recovered"],
+            "note": (
+                "Further attempts stopped. Payments already completed by customers are not "
+                "reversed by a rollback."
+            ),
+        }
+
     def snapshot(self) -> dict:
         return {
             "rolled_back_changes": sorted(self.rolled_back_changes),
@@ -204,6 +284,15 @@ class ControlPlane:
             "max_retries": self.max_retries,
             "retry_enabled": self.retry_enabled,
             "monitoring_interval_s": self.monitoring_interval_s,
+            "recovery_campaigns": {
+                cid: {
+                    "attempted": c["attempted"],
+                    "recovered": c["recovered"],
+                    "recovered_value_paise": c["recovered_value_paise"],
+                    "cancelled": c["cancelled"],
+                }
+                for cid, c in self.recovery_campaigns.items()
+            },
         }
 
 

@@ -371,6 +371,69 @@ def get_historical_incidents(ctx: ToolContext, limit: int = 5, **features: Any) 
     return {"matches": matches}
 
 
+def get_action_outcomes(
+    ctx: ToolContext,
+    signature: dict[str, Any] | None = None,
+    action: str | None = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """What actually happened the last time each action was tried under conditions like these.
+
+    Reads recorded outcomes out of incident memory. It computes nothing about the present and
+    invents nothing about the past: every count is a query over stored `IncidentOutcomeRecord`s,
+    which is what makes historical evidence checkable rather than recalled.
+
+    The condition is passed as one `signature` object and filtered against the schema's own field
+    names, so this tool has no hard-coded knowledge of which dimensions exist — adding one to
+    `FailureSignature` makes it queryable here without touching this file.
+    """
+    if ctx.memory is None or not hasattr(ctx.memory, "get_action_outcomes_for_condition"):
+        return {"outcomes": [], "note": "incident memory unavailable"}
+
+    query = _signature_from(signature or {})
+    rows = ctx.memory.get_action_outcomes_for_condition(query)
+    if action:
+        rows = [r for r in rows if r.action == action]
+    return {
+        "signature": query.label(),
+        "memory_size": len(ctx.memory),
+        "outcomes": [r.model_dump(mode="json") for r in rows[:limit]],
+    }
+
+
+def get_recoverable_orders(
+    ctx: ToolContext, minutes: int = 30, limit: int = 200
+) -> dict[str, Any]:
+    """Payments that failed in the window and could still be completed.
+
+    The population and the subset both, so a caller can report "8,900 recoverable of 12,430
+    failed" rather than a numerator with nothing under it. Orders the customer already completed
+    themselves are excluded — see `pic/recovery/orders.py` for why that matters.
+    """
+    from ..recovery.orders import expected_value_paise, find_recoverable_orders
+
+    start, end, _, _ = _windows(ctx, minutes, None)
+    orders, summary = find_recoverable_orders(ctx.store, start, end)
+    return {
+        **summary,
+        "window_minutes": minutes,
+        "expected_recoverable_value_paise": expected_value_paise(orders),
+        "orders": [o.model_dump(mode="json") for o in orders[:limit]],
+    }
+
+
+def _signature_from(features: dict[str, Any]) -> Any:
+    """Build a FailureSignature from loose tool arguments, dropping anything unrecognised.
+
+    Unknown keys are discarded rather than raising: a caller asking about a dimension this build
+    does not have should get a broader answer, not an error.
+    """
+    from ..schemas import FailureSignature
+
+    allowed = set(FailureSignature.model_fields)
+    return FailureSignature(**{k: v for k, v in features.items() if k in allowed and v is not None})
+
+
 def get_retry_effectiveness(ctx: ToolContext, minutes: int | None = None) -> dict[str, Any]:
     """Whether retries are recovering payments — decides if a retry change is worth proposing."""
     start, end, _, _ = _windows(ctx, minutes, None)
@@ -402,6 +465,34 @@ _WINDOW_PARAMS = {
 }
 
 SPECS = [
+    ToolSpec(
+        name="get_action_outcomes",
+        description=(
+            "Recorded outcomes of each action under a similar failure signature: attempts, "
+            "successes, rollbacks, median recovery time and median revenue protected."
+        ),
+        parameters={
+            "signature": {
+                "type": "object",
+                "description": "Failure signature dimensions to match remembered incidents on.",
+            },
+            "action": {"type": "string"},
+            "limit": {"type": "integer"},
+        },
+        func=get_action_outcomes,
+    ),
+    ToolSpec(
+        name="get_recoverable_orders",
+        description=(
+            "Failed payments in the window that could still be completed, with the recovery "
+            "method each one needs and the measured probability it works."
+        ),
+        parameters={
+            "minutes": {"type": "integer"},
+            "limit": {"type": "integer"},
+        },
+        func=get_recoverable_orders,
+    ),
     ToolSpec(
         name="get_residual_segment_metrics",
         description=(

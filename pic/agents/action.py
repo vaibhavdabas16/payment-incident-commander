@@ -193,6 +193,7 @@ class ActionAgent(Agent):
             ctx,
             action=result.action.value,
             parameters=result.parameters,
+            granted_parameters=dict(decision.granted_parameters),
             reason=reason,
             approved_by=decision.approved_by,
             policy_outcome=decision.outcome.value,
@@ -202,33 +203,48 @@ class ActionAgent(Agent):
             inverse=result.inverse_action,
         )
 
-    def _audit_raw(
-        self,
-        ctx: IncidentContext,
-        *,
-        action: str,
-        parameters: dict[str, Any],
-        reason: str,
-        approved_by: str,
-        policy_outcome: str,
-        execution_result: str,
-        adapter: str,
-        reversible: bool,
-        inverse: dict[str, Any] | None,
-    ) -> None:
-        record = AuditRecord(
-            audit_id=f"aud_{uuid.uuid4().hex[:12]}",
-            timestamp=utcnow(),
-            incident_id=ctx.incident.incident_id,
-            action=action,
-            parameters=parameters,
-            reason=reason,
-            approved_by=approved_by,
-            policy_outcome=policy_outcome,
-            execution_result=execution_result,
-            adapter=adapter,
-            reversible=reversible,
-            inverse_action=inverse,
-        )
-        ctx.incident.audit.append(record)
-        ctx.publish("audit", record.model_dump(mode="json"))
+    def _audit_raw(self, ctx: IncidentContext, **fields: Any) -> None:
+        write_audit(ctx, **fields)
+
+
+def write_audit(
+    ctx: IncidentContext,
+    *,
+    action: str,
+    parameters: dict[str, Any],
+    reason: str,
+    granted_parameters: dict[str, Any] | None = None,
+    approved_by: str,
+    policy_outcome: str,
+    execution_result: str,
+    adapter: str,
+    reversible: bool,
+    inverse: dict[str, Any] | None,
+) -> AuditRecord:
+    """Append an immutable record of a side effect to the incident.
+
+    Module-level rather than a method, because the Action Agent is no longer the only thing that
+    executes an authorised write: the Order Recovery Agent runs its own gated campaign, and both
+    must produce audit records of exactly the same shape. Two copies of this would eventually
+    become two slightly different audit trails.
+    """
+    record = AuditRecord(
+        audit_id=f"aud_{uuid.uuid4().hex[:12]}",
+        timestamp=utcnow(),
+        incident_id=ctx.incident.incident_id,
+        action=action,
+        parameters=parameters,
+        # Defaults to what executed: for a rollback there is no separate grant, because the
+        # authority is the inverse itself.
+        granted_parameters=dict(granted_parameters if granted_parameters is not None else parameters),
+        reason=reason,
+        approved_by=approved_by,
+        policy_outcome=policy_outcome,
+        execution_result=execution_result,
+        adapter=adapter,
+        reversible=reversible,
+        inverse_action=inverse,
+    )
+    ctx.incident.audit.append(record)
+    ctx.publish("audit", record.model_dump(mode="json"))
+    return record

@@ -21,6 +21,7 @@ allowed_actions:
   - configure_retry
   - rollback_change
   - set_monitoring_frequency
+  - recover_failed_payments
   - notify_merchant
   - create_incident_ticket
   - no_action
@@ -31,6 +32,7 @@ autonomous_actions:
   - shift_traffic
   - configure_retry
   - set_monitoring_frequency
+  - recover_failed_payments
   - notify_merchant
   - create_incident_ticket
   - no_action
@@ -51,6 +53,9 @@ bounds:
   max_retries: 3
   min_monitoring_interval_seconds: 30
   max_monitoring_interval_seconds: 600
+  # Ceiling on one order-recovery campaign. Recovering failed payments touches customers, so the
+  # merchant caps how many of them the agent may go after without being asked.
+  max_recovery_payments: 5000
 
 thresholds:
   # Above this much revenue at risk, a human signs off even on an otherwise autonomous action.
@@ -85,6 +90,17 @@ routing:
     - route_C
   # Never move traffic onto a route whose recent success rate is below this.
   min_destination_success_rate: 0.80
+
+# The second recovery layer: which means the agent may use to complete payments that already
+# failed. `retry` and `alternate_route` happen inside the payment stack. `payment_link` reaches
+# the merchant's customer, which is a different kind of act, so it is withheld from autonomous use
+# and a campaign requiring it is clamped down to the methods that are permitted.
+recovery:
+  autonomous_methods:
+    - retry
+    - alternate_route
+  methods_requiring_approval:
+    - payment_link
 
 notifications:
   escalation_channel: merchant

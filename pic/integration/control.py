@@ -52,6 +52,7 @@ class WebhookControlPlane:
     retry_enabled: bool = True
     monitoring_interval_s: int = 120
     rolled_back_changes: set[str] = field(default_factory=set)
+    recovery_campaigns: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Every dispatch, for the audit trail and for support conversations that begin "your system
     # says it moved our traffic at 03:14".
     dispatched: list[dict[str, Any]] = field(default_factory=list)
@@ -149,6 +150,46 @@ class WebhookControlPlane:
         self.rolled_back_changes.discard(change_id)
         return {"change_id": change_id, "restored": True}
 
+    def recover_payments(
+        self, campaign_id: str, orders: list[dict], methods: list[str] | None = None
+    ) -> dict:
+        """Ask the merchant to re-present failed payments, and record what they report back.
+
+        Same rule as every other write here: what the merchant confirms is what gets recorded. An
+        endpoint that does not answer with counts is treated as having recovered nothing, because
+        the alternative is reporting revenue on the strength of a 200.
+        """
+        confirmed = self._post(
+            "recover_payments",
+            {"campaign_id": campaign_id, "orders": orders, "methods": methods},
+        )
+        self.recovery_campaigns[campaign_id] = confirmed
+        return {
+            "campaign_id": campaign_id,
+            "attempted": int(confirmed.get("attempted", 0)),
+            "recovered": int(confirmed.get("recovered", 0)),
+            "attempted_value_paise": int(confirmed.get("attempted_value_paise", 0)),
+            "recovered_value_paise": int(confirmed.get("recovered_value_paise", 0)),
+            "by_method": confirmed.get("by_method", {}) or {},
+            "skipped_by_method": confirmed.get("skipped_by_method", {}) or {},
+            "cancelled": False,
+            "confirmed_by_merchant": True,
+        }
+
+    def cancel_recovery(self, campaign_id: str) -> dict:
+        confirmed = self._post("cancel_recovery", {"campaign_id": campaign_id})
+        campaign = self.recovery_campaigns.get(campaign_id, {})
+        return {
+            "campaign_id": campaign_id,
+            "cancelled": True,
+            "known": bool(campaign),
+            "already_recovered": int(confirmed.get("already_recovered", campaign.get("recovered", 0))),
+            "note": (
+                "Further attempts stopped. Payments already completed by customers are not "
+                "reversed by a rollback."
+            ),
+        }
+
     def snapshot(self) -> dict:
         return {
             "endpoint": self.endpoint,
@@ -182,6 +223,7 @@ class ReadOnlyControlPlane:
     retry_enabled: bool = True
     monitoring_interval_s: int = 120
     rolled_back_changes: set[str] = field(default_factory=set)
+    recovery_campaigns: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def _refuse(self, *_args: Any, **_kwargs: Any) -> dict:
         raise ActionRejected(self.reason)
@@ -193,6 +235,8 @@ class ReadOnlyControlPlane:
     configure_retry = _refuse
     rollback_config_change = _refuse
     restore_config_change = _refuse
+    recover_payments = _refuse
+    cancel_recovery = _refuse
 
     def snapshot(self) -> dict:
         return {"mode": "read_only", "reason": self.reason}

@@ -169,6 +169,51 @@ def restore_change(ctx: ToolContext, change_id: str) -> dict[str, Any]:
     }
 
 
+def recover_failed_payments(
+    ctx: ToolContext,
+    orders: list[dict[str, Any]],
+    methods: list[str] | None = None,
+    campaign_id: str | None = None,
+) -> dict[str, Any]:
+    """Re-present payments that failed during the incident, and report what actually completed.
+
+    The second recovery layer. Fixing the routing stops further losses; this is the only thing in
+    the system that goes after the orders already lost.
+
+    `orders` comes from `get_recoverable_orders`, which reads them out of the event store — this
+    tool cannot invent an order, and an order the store does not contain cannot be recovered by
+    it. `methods` is whatever merchant policy granted, so a method the merchant has not authorised
+    is never attempted even if the campaign asks for it.
+    """
+    control = _require_control(ctx)
+    if not orders:
+        raise ValueError("no orders to recover")
+    campaign = campaign_id or f"rec_{ctx.incident_id}_{len(ctx.notifications)}"
+    detail = control.recover_payments(campaign, orders, methods)
+    return {
+        "adapter": ADAPTER,
+        "detail": detail,
+        # The inverse stops the campaign. It does not — and nothing could — reverse payments a
+        # customer has already completed; `cancel_recovery` says so in its own result rather than
+        # letting a rollback imply more than it did.
+        "inverse_action": {
+            "tool": "cancel_order_recovery",
+            "arguments": {"campaign_id": campaign},
+        },
+    }
+
+
+def cancel_order_recovery(ctx: ToolContext, campaign_id: str) -> dict[str, Any]:
+    """Stop a recovery campaign. The inverse of `recover_failed_payments`."""
+    control = _require_control(ctx)
+    detail = control.cancel_recovery(campaign_id)
+    return {
+        "adapter": ADAPTER,
+        "detail": detail,
+        "inverse_action": None,
+    }
+
+
 def set_monitoring_frequency(ctx: ToolContext, interval_seconds: int) -> dict[str, Any]:
     """Raise or lower observation cadence. Always safe and always reversible."""
     control = _require_control(ctx)
@@ -301,6 +346,40 @@ SPECS = [
         func=set_monitoring_frequency,
         write=True,
         inverse="set_monitoring_frequency",
+    ),
+    ToolSpec(
+        name="recover_failed_payments",
+        description=(
+            "Re-present payments that failed during the incident, by retry, alternate route or "
+            "payment link. Only attempts orders the event store actually contains and only by "
+            "methods merchant policy has granted."
+        ),
+        parameters={
+            "orders": {
+                "type": "array",
+                "required": True,
+                "description": "Recoverable orders from get_recoverable_orders.",
+            },
+            "methods": {
+                "type": "array",
+                "description": "Recovery methods permitted by merchant policy.",
+            },
+            "campaign_id": {"type": "string"},
+        },
+        func=recover_failed_payments,
+        write=True,
+        inverse="cancel_order_recovery",
+    ),
+    ToolSpec(
+        name="cancel_order_recovery",
+        description=(
+            "Stop a recovery campaign. Halts further attempts; cannot reverse payments customers "
+            "have already completed."
+        ),
+        parameters={"campaign_id": {"type": "string", "required": True}},
+        func=cancel_order_recovery,
+        write=True,
+        inverse=None,
     ),
     ToolSpec(
         name="notify_merchant",
