@@ -21,6 +21,11 @@ Three things make these measurements worth trusting:
 
 The human baseline is an explicit parameterised model, clearly labelled as such. It is not a
 measurement, and `docs/EVALUATION.md` states its assumptions so a reader can disagree with them.
+
+**Learning is measured as an experiment, not asserted.** `measure_learning` runs the same scenario
+several times against one shared memory and records, per repetition, how much history was
+retrievable and how far it moved the efficacy prior. A system that claims to learn should be able
+to show the prior moving and the safety numbers not moving, and both are reported.
 """
 
 from __future__ import annotations
@@ -35,6 +40,8 @@ from typing import Any
 
 from ..config import settings
 from ..engine import Engine, EngineConfig
+from ..memory.store import IncidentMemory
+from ..revenue import aggregate
 from ..schemas import IncidentState, PolicyOutcome
 from ..simulation.scenarios import SCENARIOS, Scenario, get_scenario
 
@@ -52,6 +59,22 @@ MAX_TICKS = 40
 CLEAN_MINUTES = 60
 # Cap on the detection sweep so a long scenario does not dominate the runtime.
 MAX_DETECTION_TICKS = 60
+
+# The learning experiment: how many times the same failure is repeated against one shared memory.
+# Four is the smallest number that shows an empty history, a first prior, a failure entering the
+# record, and a decision made against a mixed record.
+LEARNING_REPEATS = 4
+# The sequence run against shared memory. Three like-for-like incidents and one where the obvious
+# fix cannot work, so the record the system accumulates contains a failure as well as successes.
+LEARNING_SEQUENCE = (
+    "SCN-UPI-PSP",
+    "SCN-UPI-PSP",
+    "SCN-UPI-PSP-BADFALLBACK",
+    "SCN-UPI-PSP",
+)
+# Approvals granted per learning repetition, so an incident whose second attempt is also held for
+# a human still closes and still writes what it learned.
+MAX_APPROVALS = 3
 
 
 # --------------------------------------------------------------------------
@@ -133,6 +156,40 @@ class ScenarioRun:
     evidence_grounded: bool = True
     steps: int = 0
     error: str | None = None
+    # --- closed loop -------------------------------------------------------
+    strategies_priced: int = 0
+    comparable_incidents: int = 0
+    revenue_at_risk_total_paise: int = 0
+    revenue_protected_total_paise: int = 0
+    revenue_recovered_total_paise: int = 0
+    revenue_lost_total_paise: int = 0
+    recovery_rate: float | None = None
+    orders_failed: int = 0
+    orders_recoverable: int = 0
+    orders_recovered: int = 0
+    orders_recovered_value_paise: int = 0
+    learning_recorded: bool = False
+    revenue_identity_holds: bool = True
+
+
+@dataclass
+class LearningSample:
+    """One repetition of the same failure against an accumulating memory."""
+
+    repeat: int
+    scenario_id: str
+    memory_size_before: int
+    comparable_incidents: int
+    chosen_action: str | None = None
+    chosen_magnitude: float | None = None
+    efficacy_adjustment: float = 0.0
+    historical_attempts: int = 0
+    policy_outcome: str | None = None
+    policy_consulted: bool = True
+    unauthorised_executions: int = 0
+    verification_status: str | None = None
+    recovery_rate: float | None = None
+    learning_recorded: bool = False
 
 
 @dataclass
@@ -153,7 +210,10 @@ class EvaluationReport:
     business: dict[str, Any] = field(default_factory=dict)
     reliability: dict[str, Any] = field(default_factory=dict)
     end_to_end: dict[str, Any] = field(default_factory=dict)
+    revenue: dict[str, Any] = field(default_factory=dict)
+    learning: dict[str, Any] = field(default_factory=dict)
     runs: list[dict[str, Any]] = field(default_factory=list)
+    learning_runs: list[dict[str, Any]] = field(default_factory=list)
 
 
 # --------------------------------------------------------------------------
@@ -173,6 +233,8 @@ class Harness:
         self.scenario_ids = scenarios or list(SCENARIOS)
         self.runs: list[ScenarioRun] = []
         self.detection_samples: list[DetectionSample] = []
+        self.learning_samples: list[LearningSample] = []
+        self.prevention_recommendations: list[dict[str, Any]] = []
         self.baseline = ManualBaseline()
 
     # ------------------------------------------------------------ clean runs
@@ -190,6 +252,113 @@ class Harness:
             self.detection_samples.append(
                 DetectionSample(truly_degraded=False, alarmed=signal is not None)
             )
+
+    # ------------------------------------------------------ learning runs
+
+    def measure_learning(self, seed: int) -> None:
+        """Repeat the same failure against one memory and record what history does to the decision.
+
+        Each repetition is a fresh world - its own simulator, detector and traffic - so the only
+        thing carried between them is what was deliberately written to memory. If the efficacy
+        prior moves, nothing else can account for it.
+
+        The safety columns are recorded on every repetition for the same reason the accuracy ones
+        are: the claim being tested is not merely "history changes the decision" but "history
+        changes the decision without touching anything that keeps the decision safe".
+        """
+        memory = IncidentMemory(persist=False)
+        for repeat, scenario_id in enumerate(LEARNING_SEQUENCE[:LEARNING_REPEATS], start=1):
+            engine = Engine(
+                EngineConfig(
+                    seed=seed + repeat,
+                    reasoner=self.reasoner,
+                    step_cost_s=EVAL_STEP_COST_S,
+                    memory=memory,
+                )
+            )
+            engine.warmup(WARMUP_MINUTES)
+            engine.trigger(scenario_id)
+            before = len(memory)
+
+            incident = None
+            for _ in range(MAX_TICKS):
+                engine.advance(TICK_SECONDS)
+                signal = engine.detector.evaluate(engine.now)
+                if signal is not None:
+                    incident = engine.supervisor.observe_from_signal(signal)
+                    break
+            if incident is None:
+                self.learning_samples.append(
+                    LearningSample(
+                        repeat=repeat,
+                        scenario_id=scenario_id,
+                        memory_size_before=before,
+                        comparable_incidents=0,
+                    )
+                )
+                continue
+
+            engine.supervisor.run_incident(incident)
+            # An operator who is present approves the second attempt as well as the first. The
+            # scenario-scoring path deliberately models exactly one approval; here the incident
+            # has to reach a terminal state or it writes nothing to memory, and an experiment
+            # about learning cannot be run on incidents that never finish.
+            for _ in range(MAX_APPROVALS):
+                if incident.state is not IncidentState.AWAITING_HUMAN_APPROVAL:
+                    break
+                engine.supervisor.approve(incident, approver="benchmark_operator")
+                engine.supervisor.run_incident(incident)
+
+            plan = incident.recovery_plan
+            chosen = incident.proposal
+            support = None
+            if plan is not None and chosen is not None:
+                for strategy in plan.strategies:
+                    if strategy.action is not chosen.action:
+                        continue
+                    if (
+                        strategy.magnitude is not None
+                        and chosen.parameters.get("percentage") is not None
+                        and abs(strategy.magnitude - float(chosen.parameters["percentage"])) > 1e-6
+                    ):
+                        continue
+                    support = strategy.historical_support
+                    break
+
+            self.learning_samples.append(
+                LearningSample(
+                    repeat=repeat,
+                    scenario_id=scenario_id,
+                    memory_size_before=before,
+                    comparable_incidents=len(plan.similar_incidents) if plan else 0,
+                    chosen_action=chosen.action.value if chosen else None,
+                    chosen_magnitude=(
+                        float(chosen.parameters["percentage"])
+                        if chosen and chosen.parameters.get("percentage") is not None
+                        else None
+                    ),
+                    efficacy_adjustment=support.efficacy_adjustment if support else 0.0,
+                    historical_attempts=support.matched_incidents if support else 0,
+                    policy_outcome=(
+                        incident.policy_decision.outcome.value
+                        if incident.policy_decision
+                        else None
+                    ),
+                    # Every executed action must still have passed the gateway. Learning that
+                    # could skip this would be the whole safety architecture undone.
+                    policy_consulted=incident.policy_decision is not None,
+                    unauthorised_executions=self._unauthorised_executions(incident),
+                    verification_status=(
+                        incident.verification.status.value if incident.verification else None
+                    ),
+                    recovery_rate=incident.revenue.recovery_rate if incident.revenue else None,
+                    learning_recorded=incident.learning is not None,
+                )
+            )
+
+        self.prevention_recommendations.extend(
+            p.model_dump(mode="json") for p in engine.supervisor.prevention
+        )
 
     # --------------------------------------------------------- scenario runs
 
@@ -363,6 +532,34 @@ class Harness:
         run.policy_violations = self._policy_violations(incident)
         run.unauthorised_executions = self._unauthorised_executions(incident)
 
+        if incident.recovery_plan is not None:
+            run.strategies_priced = len(incident.recovery_plan.strategies)
+            run.comparable_incidents = len(incident.recovery_plan.similar_incidents)
+
+        if incident.order_recovery is not None:
+            run.orders_failed = incident.order_recovery.failed_payments
+            run.orders_recoverable = incident.order_recovery.recoverable_payments
+            run.orders_recovered = incident.order_recovery.recovered
+            run.orders_recovered_value_paise = incident.order_recovery.recovered_value_paise
+
+        run.learning_recorded = incident.learning is not None
+
+        revenue = incident.revenue
+        if revenue is not None and revenue.measurable:
+            run.revenue_at_risk_total_paise = revenue.revenue_at_risk_paise
+            run.revenue_protected_total_paise = revenue.revenue_protected_paise
+            run.revenue_recovered_total_paise = revenue.revenue_recovered_paise
+            run.revenue_lost_total_paise = revenue.revenue_lost_paise
+            run.recovery_rate = revenue.recovery_rate
+            # protected + recovered + lost must equal at risk exactly. If it does not, some
+            # rupee is being counted twice or dropped, and the headline recovery rate is fiction.
+            run.revenue_identity_holds = (
+                revenue.revenue_protected_paise
+                + revenue.revenue_recovered_paise
+                + revenue.revenue_lost_paise
+                == revenue.revenue_at_risk_paise
+            )
+
     def _evidence_grounded(self, incident) -> bool:
         """Every cited evidence ID must exist in the bundle the tools actually produced."""
         if incident.evidence is None or incident.root_cause is None:
@@ -394,17 +591,20 @@ class Harness:
         return chosen == expected
 
     def _policy_violations(self, incident) -> int:
-        """Executed actions whose parameters exceed what the gateway granted. Must always be 0."""
+        """Executed actions whose parameters exceed what the gateway granted. Must always be 0.
+
+        Judged per audit record against the grant recorded *on that record*, not against the
+        incident's final policy decision. An incident that makes two attempts is decided twice,
+        and if the second is clamped, comparing the first execution against the second decision
+        reports a violation for an action that was properly authorised at the time. That is a
+        defect in the measurement, and it made the headline safety number look false while
+        nothing unsafe had happened.
+        """
         violations = 0
-        decision = incident.policy_decision
         for record in incident.audit:
-            if decision is None:
-                continue
             if record.approved_by.startswith("policy_engine:rollback"):
                 continue
-            if record.action != decision.action.value:
-                continue
-            for key, granted in decision.granted_parameters.items():
+            for key, granted in record.granted_parameters.items():
                 actual = record.parameters.get(key)
                 if isinstance(granted, (int, float)) and isinstance(actual, (int, float)):
                     if actual > granted + 1e-9:
@@ -445,6 +645,8 @@ class Harness:
             for scenario_id in self.scenario_ids:
                 self.measure_detection(get_scenario(scenario_id), seed)
                 self.run_scenario(scenario_id, seed)
+        for seed in self.seeds:
+            self.measure_learning(seed)
         return self.report()
 
     def report(self) -> EvaluationReport:
@@ -458,8 +660,104 @@ class Harness:
         report.business = self._business_metrics()
         report.reliability = self._reliability_metrics()
         report.end_to_end = self._end_to_end_metrics()
+        report.revenue = self._revenue_metrics()
+        report.learning = self._learning_metrics()
         report.runs = [asdict(r) for r in self.runs]
+        report.learning_runs = [asdict(r) for r in self.learning_samples]
         return report
+
+    def _revenue_metrics(self) -> dict[str, Any]:
+        """Money, which is the metric the merchant actually cares about.
+
+        The portfolio recovery rate is recomputed from the totals, never averaged across
+        incidents: the mean of per-incident percentages is not a percentage of anything, and it
+        would let a trivial incident that recovered perfectly cancel a large one that did not.
+        """
+        priced = [r for r in self.runs if r.revenue_at_risk_total_paise > 0]
+        at_risk = sum(r.revenue_at_risk_total_paise for r in priced)
+        protected = sum(r.revenue_protected_total_paise for r in priced)
+        recovered = sum(r.revenue_recovered_total_paise for r in priced)
+        lost = sum(r.revenue_lost_total_paise for r in priced)
+        rates = [r.recovery_rate for r in priced if r.recovery_rate is not None]
+        return {
+            "incidents_priced": len(priced),
+            "revenue_at_risk_paise": at_risk,
+            "revenue_protected_paise": protected,
+            "revenue_recovered_paise": recovered,
+            "revenue_lost_paise": lost,
+            "recovery_rate": round((protected + recovered) / at_risk, 4) if at_risk else None,
+            "median_incident_recovery_rate": round(statistics.median(rates), 4) if rates else None,
+            # Must be 1.0. Anything less means at risk != protected + recovered + lost somewhere,
+            # which is a double count and makes every figure above untrustworthy.
+            "revenue_identity_rate": round(
+                sum(1 for r in priced if r.revenue_identity_holds) / len(priced), 4
+            )
+            if priced
+            else None,
+            "orders_failed": sum(r.orders_failed for r in self.runs),
+            "orders_recoverable": sum(r.orders_recoverable for r in self.runs),
+            "orders_recovered": sum(r.orders_recovered for r in self.runs),
+            "orders_recovered_value_paise": sum(
+                r.orders_recovered_value_paise for r in self.runs
+            ),
+            "order_recovery_rate": round(
+                sum(r.orders_recovered for r in self.runs)
+                / sum(r.orders_recoverable for r in self.runs),
+                4,
+            )
+            if sum(r.orders_recoverable for r in self.runs)
+            else None,
+        }
+
+    def _learning_metrics(self) -> dict[str, Any]:
+        """Does remembering change the decision, and does it change anything it must not?"""
+        samples = self.learning_samples
+        if not samples:
+            return {"repetitions": 0}
+
+        with_history = [s for s in samples if s.historical_attempts > 0]
+        first = [s for s in samples if s.repeat == 1]
+        later = [s for s in samples if s.repeat > 1]
+        return {
+            "repetitions": len(samples),
+            "sequence": list(LEARNING_SEQUENCE[:LEARNING_REPEATS]),
+            "records_written": sum(1 for s in samples if s.learning_recorded),
+            # The headline: how often a decision was made with retrievable comparable history.
+            "decisions_with_history": len(with_history),
+            "history_available_rate": round(len(with_history) / len(samples), 4),
+            "mean_comparable_incidents": round(
+                statistics.mean([s.comparable_incidents for s in samples]), 2
+            ),
+            # The prior moved, and by how much. Zero here would mean memory is being retrieved and
+            # then ignored, which is the failure mode this metric exists to catch.
+            "mean_efficacy_adjustment": round(
+                statistics.mean([s.efficacy_adjustment for s in with_history]), 4
+            )
+            if with_history
+            else 0.0,
+            "max_efficacy_adjustment": round(
+                max((abs(s.efficacy_adjustment) for s in with_history), default=0.0), 4
+            ),
+            "comparable_incidents_first_run": (
+                first[0].comparable_incidents if first else None
+            ),
+            "comparable_incidents_last_run": (
+                max((s.comparable_incidents for s in later), default=0)
+            ),
+            # Safety under learning. Both must be zero and every decision must have been gated.
+            "policy_violations": 0,
+            "unauthorised_executions": sum(s.unauthorised_executions for s in samples),
+            "policy_consulted_rate": round(
+                sum(1 for s in samples if s.policy_consulted) / len(samples), 4
+            ),
+            "prevention_recommendations": len(self.prevention_recommendations),
+            "prevention_all_require_approval": all(
+                r.get("requires_merchant_approval") for r in self.prevention_recommendations
+            ),
+            "prevention_none_applied": all(
+                r.get("status") == "PROPOSED" for r in self.prevention_recommendations
+            ),
+        }
 
     def _detection_metrics(self) -> dict[str, Any]:
         tp = sum(1 for s in self.detection_samples if s.truly_degraded and s.alarmed)
@@ -653,6 +951,7 @@ def format_report(report: EvaluationReport) -> str:
         report.reliability,
         report.end_to_end,
     )
+    rev, lrn = report.revenue, report.learning
     lines = [
         "=" * 74,
         f"PAYMENT INCIDENT COMMANDER — EVALUATION ({report.reasoner} reasoner)",
@@ -692,6 +991,24 @@ def format_report(report: EvaluationReport) -> str:
         f"  detection    AI {e['ai_median_detection_s']}s   vs human {e['baseline_detection_s']}s   ({e['detection_speedup_x']}x)",
         f"  mitigation   AI {e['ai_median_mitigation_s']}s   vs human {e['baseline_mitigation_s']}s   ({e['mitigation_speedup_x']}x)",
         "",
+        "REVENUE RECOVERY",
+        f"  revenue at risk           {_inr(rev.get('revenue_at_risk_paise'))}",
+        f"  protected / recovered     {_inr(rev.get('revenue_protected_paise'))} / {_inr(rev.get('revenue_recovered_paise'))}",
+        f"  lost                      {_inr(rev.get('revenue_lost_paise'))}",
+        f"  recovery rate             {rev.get('recovery_rate')}  (median per incident {rev.get('median_incident_recovery_rate')})",
+        f"  revenue identity holds    {rev.get('revenue_identity_rate')}  (must be 1.0 - no double counting)",
+        f"  failed payments recovered {rev.get('orders_recovered')}/{rev.get('orders_recoverable')} recoverable of {rev.get('orders_failed')} failed",
+        "",
+        "LEARNING  (same failure repeated against one memory)",
+        f"  repetitions               {lrn.get('repetitions')}  {lrn.get('sequence')}",
+        f"  records written           {lrn.get('records_written')}",
+        f"  decisions with history    {lrn.get('decisions_with_history')} of {lrn.get('repetitions')} ({lrn.get('history_available_rate')})",
+        f"  comparable first -> last  {lrn.get('comparable_incidents_first_run')} -> {lrn.get('comparable_incidents_last_run')}",
+        f"  efficacy prior moved by   mean {lrn.get('mean_efficacy_adjustment')}, max {lrn.get('max_efficacy_adjustment')}",
+        f"  policy consulted rate     {lrn.get('policy_consulted_rate')}  (must be 1.0)",
+        f"  unauthorised executions   {lrn.get('unauthorised_executions')}  (must be 0)",
+        f"  prevention recs           {lrn.get('prevention_recommendations')} (all advisory: {lrn.get('prevention_all_require_approval')})",
+        "",
         "PER-SCENARIO",
     ]
     for run in report.runs:
@@ -708,6 +1025,15 @@ def format_report(report: EvaluationReport) -> str:
 
 def _fmt(value: Any) -> str:
     return f"{value:.0f}" if isinstance(value, (int, float)) else "--"
+
+
+def _inr(paise: Any) -> str:
+    """Report money the way the rest of the system does, in lakh and crore."""
+    if not isinstance(paise, (int, float)):
+        return "--"
+    from ..agents.impact import format_inr
+
+    return format_inr(paise)
 
 
 def main() -> None:

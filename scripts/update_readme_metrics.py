@@ -46,6 +46,10 @@ def build(report: dict) -> str:
     b = report["business"]
     r = report["reliability"]
     e = report["end_to_end"]
+    # Sections that did not exist in older reports. Rendered only when the harness produced them,
+    # so regenerating from an archived result cannot invent an empty table.
+    rev = report.get("revenue") or {}
+    lrn = report.get("learning") or {}
 
     healthy = d["false_positives"] + d["true_negatives"]
     lines = [
@@ -88,6 +92,47 @@ def build(report: dict) -> str:
         f"| Estimates within 25% / 50% | {num(b['within_25pct'])} / {num(b['within_50pct'])} |",
         f"| Median time to mitigate (from onset) | {num(b['median_time_to_mitigate_s'], 's')} |",
         "",
+    ]
+
+    if rev.get("incidents_priced"):
+        lines += [
+            "| Revenue recovery | |",
+            "|---|---|",
+            f"| Revenue at risk | {inr(rev['revenue_at_risk_paise'])} |",
+            f"| Protected (loss prevented) | **{inr(rev['revenue_protected_paise'])}** |",
+            f"| Recovered (failed payments completed) | **{inr(rev['revenue_recovered_paise'])}** |",
+            f"| Lost | {inr(rev['revenue_lost_paise'])} |",
+            f"| Recovery rate | **{pct(rev['recovery_rate'], 0)}** |",
+            f"| Revenue identity holds (must be 1.0) | **{num(rev['revenue_identity_rate'])}** |",
+            f"| Failed payments recovered | {rev['orders_recovered']} of "
+            f"{rev['orders_recoverable']} recoverable, from {rev['orders_failed']} failed |",
+            "",
+        ]
+
+    if lrn.get("repetitions"):
+        lines += [
+            "**Learning** — the same failure repeated against one shared memory, each repetition in "
+            "its own simulated world. The safety columns are reported alongside, because the claim "
+            "is not merely that history changes the decision but that it changes nothing which "
+            "keeps the decision safe.",
+            "",
+            "| Learning | |",
+            "|---|---|",
+            f"| Repetitions | {lrn['repetitions']} |",
+            f"| Records written to memory | {lrn['records_written']} |",
+            f"| Comparable incidents, first run → last | "
+            f"{num(lrn['comparable_incidents_first_run'])} → "
+            f"{num(lrn['comparable_incidents_last_run'])} |",
+            f"| Efficacy prior moved by | mean {num(lrn['mean_efficacy_adjustment'])}, "
+            f"max {num(lrn['max_efficacy_adjustment'])} |",
+            f"| Policy consulted (must be 1.0) | **{num(lrn['policy_consulted_rate'])}** |",
+            f"| Unauthorised executions under learning | **{lrn['unauthorised_executions']}** |",
+            f"| Prevention recommendations, all advisory | {lrn['prevention_recommendations']} "
+            f"({lrn['prevention_all_require_approval']}) |",
+            "",
+        ]
+
+    lines += [
         "**Versus a human baseline** — a parameterised model of an on-call payments engineer, not a "
         "measurement. Its assumptions are stated in [docs/EVALUATION.md](docs/EVALUATION.md) and are "
         "deliberately generous to the human.",
