@@ -592,7 +592,10 @@ class RecoveryPlan(BaseModel):
     incident_id: str
     signature: FailureSignature
     strategies: list[RecoveryStrategy] = Field(default_factory=list)
+    # The most similar incidents, capped for display. `similar_incident_count` is how many were
+    # actually found, so a caption can never claim less evidence than the decision rested on.
     similar_incidents: list[dict[str, Any]] = Field(default_factory=list)
+    similar_incident_count: int = 0
     historical_recommendation: str = ""
     memory_size: int = 0
     # Set when the merchant profile shaped the option set (preferred magnitude, risk appetite).
@@ -735,6 +738,11 @@ class IncidentOutcomeRecord(BaseModel):
     human_intervention_required: bool = False
     final_resolution: str = "UNKNOWN"
     false_positive: bool = False
+    # True for records loaded from the demo fixture rather than measured from a live incident.
+    # It travels with the record into every query, aggregate and screen, and the UI labels it.
+    # The distinction the product rests on is between measured and invented; a seeded record that
+    # presented itself as measured would be the fabrication this system exists to prevent.
+    seeded: bool = False
 
     def succeeded(self) -> bool:
         """Whether the intervention on this incident actually worked.
