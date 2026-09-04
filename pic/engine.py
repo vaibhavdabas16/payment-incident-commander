@@ -226,15 +226,45 @@ class Engine:
         """
         return [p.model_dump(mode="json") for p in self.supervisor.prevention]
 
+    def seed_demo_history(self) -> dict[str, Any]:
+        """Load the deterministic seeded history so learning has something to have learned from.
+
+        Every record it adds is flagged `seeded`, and that flag reaches every screen that renders
+        one. This exists because a merchant who has run a single incident has an empty playbook -
+        honest, and a demonstration of nothing.
+        """
+        from .simulation.seed_memory import seed
+
+        added = seed(self.memory, merchant_id=settings.simulation.merchant_id)
+        self.supervisor._refresh_prevention(settings.simulation.merchant_id)
+        self._emit("history_seeded", {"added": added, "total": len(self.memory)})
+        return {
+            "added": added,
+            "total_remembered": len(self.memory),
+            "note": (
+                "Seeded records are labelled everywhere they appear. They describe the same "
+                "failure SCN-UPI-PSP produces, so a live incident retrieves them on merit."
+            ),
+        }
+
     def learning_summary(self) -> dict[str, Any]:
         """What the system has learned so far, for the dashboard's learning view."""
+        from .memory.playbook import build_playbook, effectiveness_by, influenced_by_history
+
         records = self.memory.all()
-        outcomes = self.memory.get_historical_recovery_outcomes(
-            merchant_id=settings.simulation.merchant_id
-        )
+        merchant = settings.simulation.merchant_id
+        outcomes = self.memory.get_historical_recovery_outcomes(merchant_id=merchant)
         return {
             "incidents_remembered": len(records),
+            "seeded_remembered": sum(1 for r in records if r.seeded),
             "outcomes": outcomes,
+            # The between-incidents view: what the system would tell you it now knows. A read-only
+            # projection - the strategy layer queries the store directly, so nothing here sits on
+            # the path from a proposal to an execution.
+            "playbook": [e.as_dict() for e in build_playbook(records, merchant_id=merchant)],
+            "by_payment_method": effectiveness_by(records, "payment_method", merchant_id=merchant),
+            "by_provider": effectiveness_by(records, "psp", merchant_id=merchant),
+            "influenced": influenced_by_history(records, merchant_id=merchant),
             "records": [
                 {
                     "incident_id": r.incident_id,
@@ -255,6 +285,7 @@ class Engine:
                     "time_to_recovery_s": r.time_to_recovery_s,
                     "human_intervention_required": r.human_intervention_required,
                     "final_resolution": r.final_resolution,
+                    "seeded": r.seeded,
                 }
                 # Newest first: what the system just learned is what a viewer is looking for.
                 for r in sorted(records, key=lambda x: x.timestamp, reverse=True)
@@ -323,7 +354,25 @@ class Engine:
             "orders_recoverable": sum(o.recoverable_payments for o in orders),
             "orders_recovered": sum(o.recovered for o in orders),
             "incidents_remembered": len(self.memory),
-            "prevention_recommendations": len(self.supervisor.prevention),
+            # Closed without a person having to be involved at any point. The headline claim of an
+            # autonomous agent is this number, so it is counted rather than implied.
+            "auto_recovered": sum(
+                1
+                for i in self.supervisor.incidents
+                if i.learning is not None
+                and i.learning.helped()
+                and not i.learning.human_intervention_required
+            ),
+            "learned_patterns": len(
+                {
+                    r.failure_signature.key()
+                    for r in self.memory.all()
+                    if not r.false_positive
+                }
+            ),
+            "prevention_recommendations": len(
+                [p for p in self.supervisor.prevention if p.status == "PROPOSED"]
+            ),
             "agent_status": _agent_status(active),
             "control_plane": self.control.snapshot(),
         }

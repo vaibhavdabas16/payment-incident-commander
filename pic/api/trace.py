@@ -17,7 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..schemas import IncidentRecord
+from ..config import settings
+from ..schemas import ActionType, IncidentRecord
 
 
 def build_trace(incident: IncidentRecord) -> dict[str, Any]:
@@ -232,6 +233,63 @@ def build_trace(incident: IncidentRecord) -> dict[str, Any]:
         if p
         else [],
         detail=(p.alternatives_considered if p else []),
+    )
+
+    # What the merchant is exposed to if the agent is wrong. Every line is read off something
+    # already recorded - the granted parameters, the recorded inverse, the verification config -
+    # rather than being a reassuring sentence written here.
+    exposure: list[str] = []
+    if p is not None and incident.policy_decision is not None:
+        granted = incident.policy_decision.granted_parameters
+        if p.action is ActionType.SHIFT_TRAFFIC and granted.get("percentage") is not None:
+            scope = granted.get("payment_method")
+            exposure.append(
+                f"Only {float(granted['percentage']):g}% of"
+                + (f" {scope}" if scope else "")
+                + f" traffic moves. The rest stays on {granted.get('from_route')} and is the"
+                " control group."
+            )
+        if p.action is ActionType.SHIFT_TRAFFIC:
+            exposure.append(
+                "The result is measured against that control group before the incident can be "
+                "called recovered, so the incident worsening on its own cannot be mistaken for "
+                "the fix working."
+            )
+        else:
+            exposure.append(
+                "This action leaves no control group, so the result is measured before/after and "
+                "reported with that caveat."
+            )
+        exposure.append(
+            f"Nothing is judged for {settings.verification.observation_seconds}s: the system waits "
+            "and watches real traffic rather than declaring success immediately."
+        )
+        if incident.action_result is not None and incident.action_result.inverse_action:
+            exposure.append(
+                "If it does not help, the recorded inverse is replayed automatically and the "
+                "incident goes to a human."
+            )
+        elif p.reversible:
+            exposure.append(
+                "The action carries an inverse, so a result that does not help is undone rather "
+                "than left in place."
+            )
+        else:
+            exposure.append(
+                "This action has no automatic inverse, which is why merchant policy requires a "
+                "person to approve it."
+            )
+
+    stage(
+        "exposure",
+        "What happens if this is wrong",
+        reached=bool(exposure),
+        headline=(
+            exposure[0]
+            if exposure
+            else "No action has been authorised, so nothing is exposed."
+        ),
+        detail=exposure[1:],
     )
 
     pd = incident.policy_decision

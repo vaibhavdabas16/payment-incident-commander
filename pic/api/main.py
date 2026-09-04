@@ -735,6 +735,16 @@ def learning() -> dict[str, Any]:
     return eng().learning_summary()
 
 
+@app.post("/api/demo/seed-history")
+def seed_history() -> dict[str, Any]:
+    """Load the deterministic seeded history used to demonstrate learning.
+
+    Explicit, and labelled: seeded records carry a flag that reaches every screen. Nothing here
+    touches the payment stream, the control plane or merchant policy.
+    """
+    return eng().seed_demo_history()
+
+
 @app.get("/api/prevention")
 def prevention() -> dict[str, Any]:
     """Recurring-failure patterns and the preventive changes they argue for.

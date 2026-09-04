@@ -535,7 +535,12 @@ def _traffic_shifts(
     if ceiling > 0:
         usable = [m for m in wanted if m <= ceiling]
         if not usable:
-            usable = [max(MIN_SHIFT_PCT, ceiling)]
+            # The whole ladder is above what stays verifiable. Offer the ceiling and a smaller
+            # option rather than a single take-it-or-leave-it size: the merchant should still see
+            # a trade-off, and both of these can be measured.
+            usable = sorted(
+                {round(max(MIN_SHIFT_PCT, ceiling), 1), round(max(MIN_SHIFT_PCT, ceiling / 2), 1)}
+            )
         wanted = usable
 
     out: list[RecoveryStrategy] = []
@@ -854,15 +859,18 @@ class RecoveryStrategyAgent(Agent):
                 _no_action(_Ids(), "No intervention is available for this diagnosis.")
             ]
 
-        similar = []
+        similar, similar_count = [], 0
         if ctx.memory is not None and hasattr(ctx.memory, "find_similar_incidents"):
-            similar = [m.as_dict() for m in ctx.memory.find_similar_incidents(signature, limit=8)]
+            matches = ctx.memory.find_similar_incidents(signature, limit=200)
+            similar_count = len(matches)
+            similar = [m.as_dict() for m in matches[:12]]
 
         plan = RecoveryPlan(
             incident_id=incident.incident_id,
             signature=signature,
             strategies=strategies,
             similar_incidents=similar,
+            similar_incident_count=similar_count,
             historical_recommendation=_recommend(strategies, similar),
             memory_size=len(records),
             profile_applied={
