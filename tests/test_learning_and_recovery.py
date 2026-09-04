@@ -15,11 +15,13 @@ learning cannot execute, cannot authorise, cannot widen policy and cannot invent
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from pic.agents.strategy import MAX_HISTORY_ADJUSTMENT, historical_support
+from pic.config import settings
 from pic.engine import Engine, EngineConfig
 from pic.memory.patterns import MIN_OCCURRENCES, find_patterns
 from pic.memory.profile import build_profile
@@ -901,3 +903,151 @@ def test_an_order_recovery_result_reports_zero_rather_than_estimating():
     assert empty.recovered == 0
     assert empty.recovered_value_paise == 0
     assert empty.executed is False
+
+
+# --------------------------------------------------------------------------
+# The learned playbook and the seeded demo history
+# --------------------------------------------------------------------------
+
+
+def test_seeded_history_is_labelled_everywhere_it_appears(memory):
+    """The distinction the product rests on is measured versus invented."""
+    from pic.simulation.seed_memory import seed
+
+    added = seed(memory)
+    assert added > 0
+    assert all(r.seeded for r in memory.all()), "every seeded record must say so"
+    assert seed(memory) == 0, "seeding twice must not duplicate"
+
+
+def test_seeded_records_obey_the_same_revenue_identity_as_measured_ones(memory):
+    from pic.simulation.seed_memory import seed
+
+    seed(memory)
+    for r in memory.all():
+        assert (
+            r.revenue_protected_paise + r.revenue_recovered_paise + r.revenue_lost_paise
+            == r.revenue_at_risk_paise
+        ), f"{r.incident_id} could express an outcome a real incident could not"
+
+
+def test_a_live_incident_retrieves_the_seeded_history_on_merit():
+    """Seeded records must match because the signature genuinely matches, not by special case."""
+    memory = IncidentMemory(persist=False)
+    from pic.simulation.seed_memory import seed
+
+    seed(memory)
+    _, incident = _run("SCN-UPI-PSP", memory=memory)
+    plan = incident.recovery_plan
+    assert plan is not None
+    assert plan.similar_incidents, "the seeded history describes this exact failure"
+    assert all(m["incident_id"].startswith("SEED-") for m in plan.similar_incidents)
+    assert "comparable" in plan.historical_recommendation.lower()
+
+
+def test_the_playbook_prefers_what_worked_and_names_what_to_avoid(memory):
+    from pic.memory.playbook import build_playbook
+    from pic.simulation.seed_memory import seed
+
+    seed(memory)
+    [entry] = build_playbook(memory.all())
+    assert entry.confident is True
+    assert entry.preferred_action == "shift_traffic"
+    assert "moderate" in entry.preferred_band
+    assert entry.preferred_helped_rate > 0.8
+    assert entry.avoid_band and "large" in entry.avoid_band
+    assert entry.avoid_reason
+    assert entry.seeded_incidents == entry.incidents
+
+
+def test_the_playbook_declines_to_prefer_on_thin_evidence(memory):
+    """Two outcomes is a coincidence with a percentage attached."""
+    from pic.memory.playbook import MIN_EVIDENCE, build_playbook
+
+    for i in range(MIN_EVIDENCE - 1):
+        memory.record_incident(_record(f"INC-000{i}"))
+    [entry] = build_playbook(memory.all())
+    assert entry.confident is False
+    assert entry.preferred_action is None
+    assert "too few" in entry.note
+
+
+def test_the_playbook_will_not_advise_against_a_barely_worse_option(memory):
+    """Advising a merchant to avoid something needs a margin, not a rounding difference."""
+    from pic.memory.playbook import build_playbook
+
+    for i in range(4):
+        memory.record_incident(_record(f"INC-a{i}", magnitude=20.0, verification="RECOVERED"))
+    for i in range(4):
+        # 3 of 4 helped against 4 of 4 - real, but not a separation worth a warning.
+        memory.record_incident(
+            _record(
+                f"INC-b{i}",
+                magnitude=50.0,
+                verification="RECOVERED" if i < 3 else "FAILED",
+                protected=800_000 if i < 3 else 0,
+            )
+        )
+    [entry] = build_playbook(memory.all())
+    assert entry.confident is True
+    assert entry.avoid_band is None
+
+
+def test_the_playbook_cannot_influence_a_decision(memory):
+    """It is a read-only projection: nothing on the decision path imports it."""
+    import inspect
+
+    from pic.agents import decision, strategy, supervisor
+    from pic.policies import gateway
+
+    for module in (strategy, decision, supervisor, gateway):
+        assert "playbook" not in inspect.getsource(module), (
+            f"{module.__name__} must not depend on the learning view"
+        )
+
+
+def test_incidents_decided_with_history_are_counted_not_claimed(memory):
+    from pic.memory.playbook import influenced_by_history
+    from pic.simulation.seed_memory import seed
+
+    seed(memory)
+    rows = influenced_by_history(memory.all())
+    # Every seeded record but the first shares the signature, so each was decided with the ones
+    # before it on the record.
+    assert len(rows) == len(memory.all()) - 1
+    assert rows[0]["informed_by"] == 1
+    assert rows[-1]["informed_by"] == len(memory.all()) - 1
+    assert all(r["seeded"] for r in rows)
+
+
+def test_effectiveness_skips_dimensions_the_data_does_not_have(memory):
+    from pic.memory.playbook import effectiveness_by
+    from pic.simulation.seed_memory import seed
+
+    seed(memory)
+    assert [r["payment_method"] for r in effectiveness_by(memory.all(), "payment_method")] == ["upi"]
+    # No record carries an issuer, so the answer is an empty list rather than an "unknown" bucket.
+    assert effectiveness_by(memory.all(), "issuer") == []
+
+
+def test_seeding_changes_no_policy_and_no_control_plane():
+    engine = _engine()
+    policy_before = json.dumps(engine.gateway.policy, sort_keys=True)
+    control_before = json.dumps(engine.simulator.control.snapshot(), sort_keys=True)
+    engine.seed_demo_history()
+    assert json.dumps(engine.gateway.policy, sort_keys=True) == policy_before
+    assert json.dumps(engine.simulator.control.snapshot(), sort_keys=True) == control_before
+
+
+def test_the_exposure_stage_is_read_off_recorded_fields():
+    """"What happens if this is wrong" must be facts, not reassurance."""
+    from pic.api.trace import build_trace
+
+    _, incident = _run("SCN-UPI-PSP")
+    stage = next(s for s in build_trace(incident)["stages"] if s["key"] == "exposure")
+    assert stage["reached"]
+    text = " ".join([stage["headline"], *stage["detail"]])
+    granted = incident.policy_decision.granted_parameters
+    assert f"{float(granted['percentage']):g}%" in text, "it must quote what policy actually granted"
+    assert "control group" in text
+    assert str(settings.verification.observation_seconds) in text
