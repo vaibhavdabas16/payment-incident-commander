@@ -15,10 +15,12 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .agents.supervisor import Clock, IncidentSupervisor
+from .config import settings
 from .detection.detector import Detector
 from .llm.base import build_reasoner
 from .memory.store import IncidentMemory
 from .policies.gateway import PolicyGateway
+from .revenue import aggregate
 from .schemas import IncidentRecord, IncidentState
 from .simulation.generator import PaymentSimulator
 from .simulation.scenarios import Scenario, get_scenario
@@ -39,6 +41,10 @@ class EngineConfig:
     warmup_minutes: int = 45
     reasoner: str | None = None
     persist_memory: bool = False
+    # An `IncidentMemory` to share with other engines. The closed-loop demo runs a sequence of
+    # separate worlds and needs each one to remember what the previous ones learned; without this
+    # every engine would start from an empty history and the loop could never be shown closing.
+    memory: Any = None
     # Fixed simulated seconds per agent step. `None` charges measured wall time (live use); the
     # evaluation harness pins it so a run does not depend on how fast the machine is.
     step_cost_s: float | None = None
@@ -84,7 +90,14 @@ class Engine:
             control = ReadOnlyControlPlane()
         self.control = control
         self.detector = Detector(self.store)
-        self.memory = IncidentMemory(persist=self.config.persist_memory)
+        # `is not None`, not `or`: IncidentMemory defines __len__, so an empty shared memory is
+        # falsy and `or` would quietly hand every engine a private one - the closed loop would
+        # then look wired up while nothing was ever shared between incidents.
+        self.memory = (
+            self.config.memory
+            if self.config.memory is not None
+            else IncidentMemory(persist=self.config.persist_memory)
+        )
         self.gateway = PolicyGateway(policy_path=self.config.policy_path)
         self.reasoner = build_reasoner(self.config.reasoner)
 
@@ -206,6 +219,58 @@ class Engine:
     def notifications(self) -> list[dict[str, Any]]:
         return self.tool_context.notifications
 
+    def prevention(self) -> list[dict[str, Any]]:
+        """Preventive recommendations mined from this merchant's remembered incidents.
+
+        Documents, not actions. Nothing here has changed merchant policy and nothing here can.
+        """
+        return [p.model_dump(mode="json") for p in self.supervisor.prevention]
+
+    def learning_summary(self) -> dict[str, Any]:
+        """What the system has learned so far, for the dashboard's learning view."""
+        records = self.memory.all()
+        outcomes = self.memory.get_historical_recovery_outcomes(
+            merchant_id=settings.simulation.merchant_id
+        )
+        return {
+            "incidents_remembered": len(records),
+            "outcomes": outcomes,
+            "records": [
+                {
+                    "incident_id": r.incident_id,
+                    "at": r.timestamp.isoformat(),
+                    "signature": r.failure_signature.label(),
+                    "root_cause": r.selected_root_cause,
+                    "action": r.actual_action_executed,
+                    "magnitude": r.intervention_magnitude,
+                    "magnitude_band": r.magnitude_band(),
+                    "verification": r.verification_result,
+                    "succeeded": r.succeeded(),
+                    "rollback_required": r.rollback_required,
+                    "revenue_at_risk_paise": r.revenue_at_risk_paise,
+                    "revenue_protected_paise": r.revenue_protected_paise,
+                    "revenue_recovered_paise": r.revenue_recovered_paise,
+                    "revenue_lost_paise": r.revenue_lost_paise,
+                    "recovery_rate": r.recovery_rate,
+                    "time_to_recovery_s": r.time_to_recovery_s,
+                    "human_intervention_required": r.human_intervention_required,
+                    "final_resolution": r.final_resolution,
+                }
+                # Newest first: what the system just learned is what a viewer is looking for.
+                for r in sorted(records, key=lambda x: x.timestamp, reverse=True)
+            ],
+            "prevention": self.prevention(),
+        }
+
+    def revenue_summary(self) -> dict[str, Any]:
+        """Portfolio revenue across every incident that has been priced.
+
+        Only closed incidents contribute: an open one has no duration yet, so its exposure is a
+        number that is still growing and including it would report a total that moves on its own.
+        """
+        priced = [i.revenue for i in self.supervisor.incidents if i.revenue is not None]
+        return aggregate(priced)
+
     def tickets(self) -> list[dict[str, Any]]:
         return self.tool_context.tickets
 
@@ -230,6 +295,10 @@ class Engine:
         protected = sum(
             i.revenue_protected_per_hour_paise for i in self.supervisor.incidents
         )
+        revenue = self.revenue_summary()
+        orders = [
+            i.order_recovery for i in self.supervisor.incidents if i.order_recovery is not None
+        ]
         return {
             "timestamp": end.isoformat(),
             "success_rate": round(window.success_rate, 4),
@@ -247,6 +316,14 @@ class Engine:
             ),
             "revenue_at_risk_per_hour_paise": revenue_at_risk,
             "revenue_protected_per_hour_paise": protected,
+            # The closed-loop headline: money, not percentages. Totals over closed incidents, so
+            # every figure below is a completed story rather than a running estimate.
+            "revenue": revenue,
+            "orders_failed": sum(o.failed_payments for o in orders),
+            "orders_recoverable": sum(o.recoverable_payments for o in orders),
+            "orders_recovered": sum(o.recovered for o in orders),
+            "incidents_remembered": len(self.memory),
+            "prevention_recommendations": len(self.supervisor.prevention),
             "agent_status": _agent_status(active),
             "control_plane": self.control.snapshot(),
         }
@@ -271,12 +348,15 @@ def _agent_status(active: list[IncidentRecord]) -> str:
         IncidentState.DETECTED: "Investigating...",
         IncidentState.INVESTIGATING: "Assessing impact...",
         IncidentState.IMPACT_ASSESSED: "Diagnosing root cause...",
-        IncidentState.DIAGNOSING: "Deciding on action...",
+        IncidentState.DIAGNOSING: "Retrieving comparable incidents...",
+        IncidentState.RECOVERY_PLANNING: "Choosing a recovery strategy...",
         IncidentState.DECIDING: "Checking merchant policy...",
         IncidentState.POLICY_REVIEW: "Executing intervention...",
         IncidentState.AWAITING_HUMAN_APPROVAL: "Awaiting human approval",
         IncidentState.EXECUTING: "Verifying recovery...",
         IncidentState.VERIFYING: "Verifying recovery...",
         IncidentState.ROLLING_BACK: "Rolling back...",
+        IncidentState.RECOVERING_ORDERS: "Recovering failed payments...",
+        IncidentState.LEARNING: "Recording what it learned...",
         IncidentState.ESCALATED: "Escalated to human",
     }.get(state, "Working...")

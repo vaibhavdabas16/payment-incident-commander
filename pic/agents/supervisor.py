@@ -14,6 +14,19 @@ Two invariants are enforced here and asserted in tests:
 The supervisor is also the only component that advances simulated time, via an injected clock. That
 matters for verification: the system must genuinely wait and observe real post-intervention traffic
 before judging its own work.
+
+Two states close the loop:
+
+* `RECOVERY_PLANNING` sits between diagnosis and decision. The Recovery Strategy Agent prices the
+  option set there and attaches what memory says about each option, so the Decision Agent chooses
+  between priced, evidenced alternatives rather than generating one.
+* `RECOVERING_ORDERS` sits after resolution. Fixing the routing stops further loss; this is where
+  the payments already lost are gone after, under its own policy decision.
+
+And `LEARNING` is no longer a pass-through. Every incident that closes — resolved, escalated,
+rolled back or acknowledged — is priced, reduced to a structured `IncidentOutcomeRecord`, written
+to memory, and folded into the merchant's recurring-failure patterns. That is the only way a
+future incident can be handled better than this one was.
 """
 
 from __future__ import annotations
@@ -23,6 +36,9 @@ from datetime import datetime
 from typing import Any, Callable
 
 from ..config import settings
+from ..memory.build import build_outcome_record
+from ..memory.patterns import find_patterns
+from ..revenue import compute_revenue_outcome
 from ..schemas import (
     ActionType,
     AgentStep,
@@ -30,17 +46,20 @@ from ..schemas import (
     IncidentRecord,
     IncidentState,
     PolicyOutcome,
+    PreventionRecommendation,
     VerificationStatus,
 )
 from .action import ActionAgent
 from .base import IncidentContext
-from .decision import DecisionAgent, route_health
+from .decision import DecisionAgent
 from .detection import DetectionAgent
 from ..schemas import NON_REMEDIAL_ACTIONS
 from .escalation import NON_OVERRIDABLE_RULE_FAMILIES, EscalationAgent, _rule_family
 from .impact import ImpactAgent
 from .investigation import InvestigationAgent
+from .recovery import OrderRecoveryAgent
 from .root_cause import RootCauseAgent
+from .strategy import RecoveryStrategyAgent, route_health
 from .verification import VerificationAgent
 
 # How many times to keep waiting when verification cannot yet measure anything.
@@ -114,18 +133,31 @@ class IncidentSupervisor:
         self.investigation_agent = InvestigationAgent()
         self.impact_agent = ImpactAgent()
         self.root_cause_agent = RootCauseAgent()
+        self.strategy_agent = RecoveryStrategyAgent()
         self.decision_agent = DecisionAgent()
         self.action_agent = ActionAgent()
         self.verification_agent = VerificationAgent()
+        self.order_recovery_agent = OrderRecoveryAgent()
         self.escalation_agent = EscalationAgent()
 
         self.incidents: list[IncidentRecord] = []
         self._incident_seq = 0
         self._route_health: dict[str, dict[str, float]] = {}
         self._executed_at: dict[str, datetime] = {}
+        # The last action actually executed per incident, retained across a rollback so learning
+        # records the intervention that failed rather than losing it with the revert.
+        self._executed_action: dict[str, Any] = {}
         self._diagnosis_retries: dict[str, int] = {}
         # Incidents whose diagnosis has already been reviewed once after acting.
         self._reviewed: set[str] = set()
+        # Incidents whose failed payments have already been swept for recovery.
+        self._recovery_attempted: set[str] = set()
+        # Recurring-failure patterns mined from memory, refreshed as incidents close. Advisory:
+        # a recommendation is a document, and nothing here can change merchant policy (ADR-011).
+        self.prevention: list[PreventionRecommendation] = []
+        # Acknowledgements survive the pattern list being recomputed, so a recommendation a person
+        # has already dealt with does not reappear as new every time an incident closes.
+        self._prevention_status: dict[str, tuple[str, str]] = {}
 
     # ----------------------------------------------------------------- setup
 
@@ -263,7 +295,13 @@ class IncidentSupervisor:
             ctx = self._context(placeholder)
             step = self.detection_agent.execute(ctx)
 
+        # Incident ids have to be unique within the memory this supervisor writes to, not merely
+        # within this supervisor. The closed-loop demo runs several worlds against one shared
+        # memory, and without this every world's first incident is INC-0001 and each one silently
+        # overwrites the last - the system appears to learn nothing while working perfectly.
         self._incident_seq += 1
+        while self.memory is not None and self.memory.get(f"INC-{self._incident_seq:04d}"):
+            self._incident_seq += 1
         signal = signal.model_copy(update={"incident_id": f"INC-{self._incident_seq:04d}"})
 
         # Anchor the baseline: from here until the incident closes, degraded windows must not be
@@ -314,6 +352,8 @@ class IncidentSupervisor:
             elif incident.state is IncidentState.IMPACT_ASSESSED:
                 self._step_diagnose(incident)
             elif incident.state is IncidentState.DIAGNOSING:
+                self._step_plan_recovery(incident)
+            elif incident.state is IncidentState.RECOVERY_PLANNING:
                 self._step_decide(incident)
             elif incident.state is IncidentState.DECIDING:
                 self._step_policy(incident)
@@ -329,6 +369,8 @@ class IncidentSupervisor:
                 self._step_escalate(incident)
             elif incident.state is IncidentState.RESOLVED:
                 self._review_for_a_second_fault(incident)
+                self._step_recover_orders(incident)
+            elif incident.state is IncidentState.RECOVERING_ORDERS:
                 self._step_learn(incident)
             elif incident.state is IncidentState.LEARNING:
                 self._step_close(incident)
@@ -402,16 +444,37 @@ class IncidentSupervisor:
         incident.root_cause = result.output
         self._transition(incident, IncidentState.DIAGNOSING)
 
+    def _step_plan_recovery(self, incident: IncidentRecord) -> None:
+        """Price the options, and retrieve what happened last time each was tried.
+
+        Failing here is not grounds to escalate on its own: the Decision Agent can generate and
+        price the same option set from the same inputs, so a strategy-stage failure costs the
+        historical evidence rather than the response. Losing the memory lookup should degrade the
+        explanation, never stall a live incident.
+        """
+        ctx = self._context(incident)
+        self.strategy_agent.execute(ctx)
+        result = ctx.scratch["recovery_strategy_result"]
+        if result.ok and result.output is not None:
+            incident.recovery_plan = result.output
+        # Cached beside the incident rather than on it: IncidentRecord is a strict contract and
+        # route health is supervisor bookkeeping, not part of the incident's public shape.
+        self._route_health[incident.incident_id] = ctx.scratch.get("route_health") or {}
+        self._transition(incident, IncidentState.RECOVERY_PLANNING)
+
     def _step_decide(self, incident: IncidentRecord) -> None:
         ctx = self._context(incident)
+        # Reuse the route health the strategy stage already measured, so the decision is priced
+        # against the same picture of the world the options were priced against.
+        cached = self._route_health.get(incident.incident_id)
+        if cached:
+            ctx.scratch["route_health"] = cached
         self.decision_agent.execute(ctx)
         result = ctx.scratch["decision_result"]
         if not result.ok or result.output is None:
             return self._escalate(incident, "no_effective_action")
         incident.proposal = result.output
-        # Cached beside the incident rather than on it: IncidentRecord is a strict contract and
-        # route health is supervisor bookkeeping, not part of the incident's public shape.
-        self._route_health[incident.incident_id] = ctx.scratch.get("route_health") or {}
+        self._route_health[incident.incident_id] = ctx.scratch.get("route_health") or cached or {}
         self._transition(incident, IncidentState.DECIDING)
 
     def _step_policy(self, incident: IncidentRecord) -> None:
@@ -484,6 +547,9 @@ class IncidentSupervisor:
         incident.action_result = result.output
         incident.time_to_mitigate_s = (self.clock.now() - incident.opened_at).total_seconds()
         self._executed_at[incident.incident_id] = self.clock.now()
+        # Kept separately from `incident.action_result`, which a rollback clears. What was executed
+        # is what memory has to learn from, whether or not it survived contact with reality.
+        self._executed_action[incident.incident_id] = result.output
 
         # Some actions never change payment behaviour: notifying the merchant, filing a ticket or
         # watching more closely. Running a statistical recovery test on those would score them as
@@ -676,8 +742,135 @@ class IncidentSupervisor:
                 },
             )
 
+    def _step_recover_orders(self, incident: IncidentRecord) -> None:
+        """Go after the payments that failed while the fault was live.
+
+        Runs once per incident, after the infrastructure question is settled. It is skipped when
+        the intervention was reverted or the incident was handed over: chasing customers to
+        complete payments through a payment stack that is still broken would be recovering them
+        into the same failure.
+        """
+        if incident.incident_id in self._recovery_attempted:
+            return self._transition(incident, IncidentState.RECOVERING_ORDERS)
+        self._recovery_attempted.add(incident.incident_id)
+
+        if self._reverted(incident):
+            self._transition(incident, IncidentState.RECOVERING_ORDERS)
+            return
+
+        ctx = self._context(incident)
+        self.order_recovery_agent.execute(ctx)
+        result = ctx.scratch.get("order_recovery_result")
+        if result is not None and result.output is not None:
+            incident.order_recovery = result.output
+        self._transition(incident, IncidentState.RECOVERING_ORDERS)
+
+    @staticmethod
+    def _reverted(incident: IncidentRecord) -> bool:
+        return any(
+            str(record.approved_by).startswith("policy_engine:rollback")
+            for record in incident.audit
+        )
+
     def _step_learn(self, incident: IncidentRecord) -> None:
         self._transition(incident, IncidentState.LEARNING)
+
+    # ------------------------------------------------------------- learning
+
+    def _learn(self, incident: IncidentRecord) -> None:
+        """Price the incident, reduce it to a structured record, and remember it.
+
+        Runs for every incident that closes, not only the ones that went well. An agent that
+        remembers only its successes will keep repeating whatever produced them, and the failed
+        interventions are the records that stop a future incident making the same bet.
+        """
+        revenue = compute_revenue_outcome(
+            incident,
+            now=self.clock.now(),
+            executed_at=self._executed_at.get(incident.incident_id),
+        )
+        incident.revenue = revenue
+        record = build_outcome_record(
+            incident,
+            revenue=revenue,
+            route_health=self._route_health.get(incident.incident_id),
+            executed=self._executed_action.get(incident.incident_id),
+        )
+        incident.learning = record
+
+        if self.memory is not None:
+            self.memory.record_incident(record)
+            self._refresh_prevention(incident.merchant_id)
+
+        if self.emit:
+            self.emit(
+                "learning",
+                {
+                    "incident_id": incident.incident_id,
+                    "action": record.actual_action_executed,
+                    "magnitude": record.intervention_magnitude,
+                    "verification": record.verification_result,
+                    "succeeded": record.succeeded(),
+                    "revenue_at_risk_paise": record.revenue_at_risk_paise,
+                    "revenue_protected_paise": record.revenue_protected_paise,
+                    "revenue_recovered_paise": record.revenue_recovered_paise,
+                    "recovery_rate": record.recovery_rate,
+                    "memory_size": len(self.memory) if self.memory is not None else 0,
+                },
+            )
+
+    def _refresh_prevention(self, merchant_id: str) -> None:
+        """Re-mine recurring patterns, preserving what a person has already ruled on."""
+        if self.memory is None:
+            return
+        patterns = find_patterns(self.memory.all(), merchant_id=merchant_id)
+        for pattern in patterns:
+            previous = self._prevention_status.get(pattern.recommendation_id)
+            if previous is not None:
+                pattern.status, pattern.acknowledged_by = previous
+        others = [p for p in self.prevention if p.merchant_id != merchant_id]
+        self.prevention = others + patterns
+        if self.emit and patterns:
+            self.emit(
+                "prevention",
+                {
+                    "merchant_id": merchant_id,
+                    "recommendations": len(patterns),
+                    "patterns": [p.pattern for p in patterns[:3]],
+                },
+            )
+
+    def acknowledge_prevention(
+        self, recommendation_id: str, who: str = "human", accept: bool = True
+    ) -> PreventionRecommendation:
+        """Record a person's decision on a preventive recommendation.
+
+        It records, and that is all it does. Merchant policy lives in `merchant_policies.yaml` and
+        is changed by a person editing that file; a system that could widen its own authority
+        because a pattern looked convincing would have no guardrails at all. Accepting one here
+        means "yes, put this in the policy" — it does not put it there.
+        """
+        for pattern in self.prevention:
+            if pattern.recommendation_id != recommendation_id:
+                continue
+            pattern.status = "ACKNOWLEDGED" if accept else "DISMISSED"
+            pattern.acknowledged_by = who
+            self._prevention_status[recommendation_id] = (pattern.status, who)
+            if self.emit:
+                self.emit(
+                    "prevention_acknowledged",
+                    {
+                        "recommendation_id": recommendation_id,
+                        "status": pattern.status,
+                        "who": who,
+                        "note": (
+                            "Recorded as a request. Merchant policy is unchanged and must be "
+                            "edited by a person."
+                        ),
+                    },
+                )
+            return pattern
+        raise ValueError(f"unknown prevention recommendation {recommendation_id}")
 
     def _step_close(self, incident: IncidentRecord) -> None:
         incident.closed_at = self.clock.now()
@@ -686,8 +879,10 @@ class IncidentSupervisor:
             i.state is not IncidentState.CLOSED for i in self.incidents if i is not incident
         ):
             self.detector.mark_recovered(incident.closed_at)
-        if self.memory is not None:
-            self.memory.record(incident)
+        # The learning work happens here, while the incident is still in LEARNING, because this
+        # is the first moment the whole story exists: the close timestamp is what turns per-hour
+        # rates into what the incident actually cost and saved.
+        self._learn(incident)
         if self.emit:
             self.emit(
                 "incident_closed",
@@ -696,6 +891,16 @@ class IncidentSupervisor:
                     "outcome": incident.outcome,
                     "duration_s": (incident.closed_at - incident.opened_at).total_seconds(),
                     "revenue_protected_per_hour_paise": incident.revenue_protected_per_hour_paise,
+                    "revenue_at_risk_paise": (
+                        incident.revenue.revenue_at_risk_paise if incident.revenue else 0
+                    ),
+                    "revenue_protected_paise": (
+                        incident.revenue.revenue_protected_paise if incident.revenue else 0
+                    ),
+                    "revenue_recovered_paise": (
+                        incident.revenue.revenue_recovered_paise if incident.revenue else 0
+                    ),
+                    "recovery_rate": incident.revenue.recovery_rate if incident.revenue else 0.0,
                 },
             )
         self._transition(incident, IncidentState.CLOSED)
@@ -781,6 +986,14 @@ class IncidentSupervisor:
         # than closing it a second time.
         if incident.state is not IncidentState.CLOSED:
             self._step_close(incident)
+        elif self.memory is not None:
+            # It is already in memory under its previous resolution. Amend that record rather than
+            # writing a second one, so the history says who ended up owning the incident.
+            self.memory.update_incident(
+                incident.incident_id,
+                final_resolution="ACKNOWLEDGED_BY_HUMAN",
+                human_intervention_required=True,
+            )
         return incident
 
     def override(
@@ -858,6 +1071,9 @@ class IncidentSupervisor:
         incident.proposal = None
         incident.policy_decision = None
         incident.verification = None
+        # The plan was priced against traffic that has since moved on; it is rebuilt from the
+        # refreshed anomaly rather than carried over.
+        incident.recovery_plan = None
         if self.emit:
             self.emit("retried", {"incident_id": incident.incident_id, "who": who})
         self._transition(incident, IncidentState.DETECTED)
