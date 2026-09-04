@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Landing from './Landing.jsx'
 import { api, connectStream, formatClock } from './api.js'
 import { Led } from './components.jsx'
-import { CommandCenter, Health, Incidents, Proof } from './pages.jsx'
+import { CommandCenter, Health, Incidents, Learning, Proof } from './pages.jsx'
 import Mark from './Mark.jsx'
 import Simulate from './Simulate.jsx'
 
@@ -11,10 +11,15 @@ const POLL_MS = 1500
 // bars while re-scanning five minutes of events per payment method, provider and issuer on the
 // server — comfortably the most expensive request the dashboard made, for no visible difference.
 const HEALTH_POLL_MS = 6000
+// Learning only changes when an incident closes.
+const LEARNING_POLL_MS = 6000
 
 const NAV = [
   ['command', 'Overview', 'ico-grid'],
   ['incidents', 'Incidents', 'ico-pulse'],
+  // What the system has learned and what it wants to prevent. Its own section because it is the
+  // only view that is about the system across incidents rather than about one of them.
+  ['learning', 'Learning', 'ico-agent'],
   ['simulate', 'Simulate', 'ico-time'],
   ['health', 'Payment Health', 'ico-heart'],
   // How it works and how well it works are the same question for a visitor, and neither is a
@@ -61,6 +66,8 @@ export default function App() {
   const [health, setHealth] = useState(null)
   const [simOptions, setSimOptions] = useState(null)
   const [evaluation, setEvaluation] = useState(null)
+  const [learning, setLearning] = useState(null)
+  const [trace, setTrace] = useState(null)
   const [status, setStatus] = useState('connecting')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -110,6 +117,15 @@ export default function App() {
     return () => clearInterval(timer)
   }, [])
 
+  /* What the system has learned only changes when an incident closes, so it is polled on the slow
+   * cadence rather than the live one - it is a growing record, not a moving number. */
+  useEffect(() => {
+    const load = () => api.learning().then(setLearning).catch(() => {})
+    load()
+    const timer = setInterval(load, LEARNING_POLL_MS)
+    return () => clearInterval(timer)
+  }, [])
+
   useEffect(() => {
     api.scenarios().then((d) => setScenarios(d.scenarios)).catch(() => {})
     api.agents().then((d) => setAgents(d.agents)).catch(() => {})
@@ -120,7 +136,14 @@ export default function App() {
   useEffect(() => {
     if (!selectedId) return
     let stale = false
-    const load = () => api.incident(selectedId).then((d) => !stale && setDetail(d)).catch(() => {})
+    const load = () =>
+      Promise.all([api.incident(selectedId), api.trace(selectedId)])
+        .then(([d, t]) => {
+          if (stale) return
+          setDetail(d)
+          setTrace(t)
+        })
+        .catch(() => {})
     load()
     const timer = setInterval(load, POLL_MS)
     return () => { stale = true; clearInterval(timer) }
@@ -209,12 +232,31 @@ export default function App() {
   const reset = async () => {
     setNotice({ kind: 'reset', text: 'Cleared every running scenario and incident.' })
     await act(() => api.control('reset'))
-    setSelectedId(null); setDetail(null); pinned.current = false
+    setSelectedId(null); setDetail(null); setTrace(null); pinned.current = false
+    api.learning().then(setLearning).catch(() => {})
   }
 
   const runCustom = async (body) => {
     setNotice({ kind: 'injected', text: 'Injected your incident. Detection needs a few seconds of traffic.' })
     await act(() => api.customScenario(body))
+  }
+
+  /** Record a decision on a preventive recommendation.
+   *
+   *  It records and nothing more: the endpoint cannot change merchant policy, and the card the
+   *  button sits on says so. */
+  const decidePrevention = async (recommendation, decision) => {
+    setNotice({
+      kind: 'reset',
+      text:
+        decision === 'accept'
+          ? 'Recorded as accepted. Merchant policy is unchanged \u2014 applying it means editing the policy file.'
+          : 'Dismissed. It will not be raised again unless the pattern changes.',
+    })
+    await act(async () => {
+      await api.preventionDecision(recommendation.recommendation_id, decision)
+      setLearning(await api.learning())
+    })
   }
 
   const open = (id) => { pinned.current = true; setSelectedId(id); setPage('incidents') }
@@ -241,7 +283,7 @@ export default function App() {
   }
 
   const live = incidents.find((i) => i.state !== 'CLOSED') || null
-  const shared = { metrics, series, incidents, incident: detail, agents, health, scenarios, busy, notice, error }
+  const shared = { metrics, series, incidents, incident: detail, trace, agents, health, scenarios, busy, notice, error, learning }
 
   return (
     <div className={`shell ${collapsed ? 'collapsed' : ''}`}>
@@ -305,6 +347,9 @@ export default function App() {
           ) : null}
           {page === 'incidents' ? (
             <Incidents {...shared} selectedId={selectedId} onOpen={openInList} onApprove={approve} onReject={reject} onStep={runStep} />
+          ) : null}
+          {page === 'learning' ? (
+            <Learning learning={learning} busy={busy} onDecide={decidePrevention} />
           ) : null}
           {page === 'health' ? <Health health={health} metrics={metrics} series={series} /> : null}
           {page === 'simulate' ? (

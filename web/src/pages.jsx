@@ -2,7 +2,9 @@ import { Fragment } from 'react'
 import SuccessRateChart from './Chart.jsx'
 import { formatClock, formatINR, formatPct } from './api.js'
 import {
-  ActivityLog, AgentTrace, Card, Empty, ErrorBox, HealthBars, Led, NextSteps, Skeleton, Tag, Workflow, confidenceInWords, impactFacts, readableAction, severityTone, statusTone,
+  ActionOutcomes, ActivityLog, AgentTrace, Card, DecisionTrace, Empty, ErrorBox, HealthBars, Led,
+  MemoryTable, NextSteps, PreventionCard, RevenueBar, SimilarIncidents, Skeleton, Tag,
+  confidenceInWords, impactFacts, readableAction, severityTone, statusTone,
 } from './components.jsx'
 
 /* Pages. Every figure comes from the API; where the system has not produced something yet the
@@ -12,7 +14,7 @@ import {
 
 export function CommandCenter({
   metrics, series, incidents, incident, agents, health, busy, error, notice,
-  selectedId, onSelect, onOpen, onApprove, onReject, onGoto, onRunHeadline, onStep,
+  selectedId, onSelect, onOpen, onApprove, onReject, onGoto, onRunHeadline, onStep, learning,
 }) {
   const live = incidents?.find((i) => i.state !== 'CLOSED') || null
   const shown = incidents?.find((i) => i.incident_id === selectedId) || live || incidents?.[0] || null
@@ -24,6 +26,8 @@ export function CommandCenter({
   return (
     <>
       {error ? <ErrorBox>{error}</ErrorBox> : null}
+
+      <RevenueHeadline metrics={metrics} incident={matches ? incident : null} live={live} />
 
       <section className={`focus ${live ? 'alert' : ''}`}>
         <header className="focus-head">
@@ -72,6 +76,12 @@ export function CommandCenter({
                 ))}
               </div>
 
+              {matches ? <WhyThisAction incident={incident} /> : null}
+              {matches && incident?.revenue?.measurable ? (
+                <RevenueBar revenue={incident.revenue} compact />
+              ) : null}
+              {matches ? <Learned incident={incident} /> : null}
+
               <div className="focus-actions">
                 {awaiting && matches ? (
                   <>
@@ -90,8 +100,9 @@ export function CommandCenter({
                 <div>
                   <b>Nothing is broken right now.</b>
                   <span>
-                    Break something and watch eight agents detect it, investigate, decide, ask
-                    permission, act — and then check their own work.
+                    Break something and watch the agents detect it, investigate, price it, decide,
+                    ask permission, act — then check their own work, go back for the payments
+                    already lost, and remember what happened.
                   </span>
                 </div>
                 <button className="btn primary" disabled={busy} onClick={onRunHeadline}>
@@ -119,7 +130,159 @@ export function CommandCenter({
           <button className="btn sm" onClick={() => onGoto('health')}>Health</button>
         </footer>
       </section>
+
+      <NextUp learning={learning} onGoto={onGoto} />
     </>
+  )
+}
+
+/** The first thing on the screen, and the only thing a merchant actually asked about.
+ *
+ *  While an incident is live this is exposure — the rate at which money is being lost right now.
+ *  Once incidents have closed it becomes the outcome, because a threat that has been dealt with is
+ *  no longer the headline. Both numbers come from the same ledger; neither is a projection. */
+function RevenueHeadline({ metrics, incident, live }) {
+  const totals = metrics?.revenue
+  const settled = totals && totals.revenue_at_risk_paise > 0
+  const exposure = metrics?.revenue_at_risk_per_hour_paise || 0
+
+  if (live && exposure > 0) {
+    return (
+      <section className="headline alert">
+        <div className="headline-main">
+          <span className="headline-k">Revenue at risk, right now</span>
+          <b className="headline-v">{formatINR(exposure)}<i>/hour</i></b>
+          <span className="headline-sub">
+            {incident?.root_cause
+              ? `${incident.root_cause.most_likely_root_cause} · ${confidenceInWords(incident.root_cause.confidence).toLowerCase()}`
+              : 'Agents are establishing the cause.'}
+          </span>
+        </div>
+        {settled ? <HeadlineTotals totals={totals} metrics={metrics} /> : null}
+      </section>
+    )
+  }
+
+  if (!settled) {
+    return (
+      <section className="headline">
+        <div className="headline-main">
+          <span className="headline-k">Revenue protected so far</span>
+          <b className="headline-v">{formatINR(0)}</b>
+          <span className="headline-sub">
+            Nothing has been at risk yet. Break something from Simulate and watch the money move.
+          </span>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section className="headline">
+      <div className="headline-main">
+        <span className="headline-k">Revenue recovered across {totals.incidents} incident{totals.incidents === 1 ? '' : 's'}</span>
+        <b className="headline-v">
+          {formatINR(totals.revenue_protected_paise + totals.revenue_recovered_paise)}
+        </b>
+        <span className="headline-sub">
+          of {formatINR(totals.revenue_at_risk_paise)} at risk · {formatPct(totals.recovery_rate, 0)} recovery rate
+        </span>
+      </div>
+      <HeadlineTotals totals={totals} metrics={metrics} />
+    </section>
+  )
+}
+
+function HeadlineTotals({ totals, metrics }) {
+  return (
+    <div className="headline-side">
+      <RevenueBar revenue={totals} />
+      <div className="facts">
+        <div className="fact"><span>Failed payments rescued</span><b>{(metrics?.orders_recovered || 0).toLocaleString()}</b></div>
+        <div className="fact"><span>Incidents remembered</span><b>{metrics?.incidents_remembered ?? 0}</b></div>
+        <div className="fact"><span>Prevention proposed</span><b>{metrics?.prevention_recommendations ?? 0}</b></div>
+      </div>
+    </div>
+  )
+}
+
+/** Why this action and not another. The historical case, where there is one. */
+function WhyThisAction({ incident }) {
+  const plan = incident?.recovery_plan
+  if (!plan) return null
+  const chosen = incident.proposal
+  return (
+    <div className="why">
+      <div className="why-k">Why this action</div>
+      <p>{chosen ? chosen.rationale : 'No action has been chosen yet.'}</p>
+      <p className="why-hist">{plan.historical_recommendation}</p>
+      {plan.similar_incidents?.length ? (
+        <details className="more">
+          <summary>{`The ${plan.similar_incidents.length} comparable incidents behind that`}</summary>
+          <SimilarIncidents rows={plan.similar_incidents} compact />
+        </details>
+      ) : null}
+    </div>
+  )
+}
+
+/** What the agent took away from this one. */
+function Learned({ incident }) {
+  const l = incident?.learning
+  if (!l) return null
+  const size = l.intervention_magnitude ? ` at ${l.intervention_magnitude}%` : ''
+  return (
+    <div className="why learned">
+      <div className="why-k">What it learned</div>
+      <p>
+        <b>{readableAction(l.actual_action_executed)}{size}</b> under this failure pattern →{' '}
+        {l.verification_result.replace(/_/g, ' ').toLowerCase()}
+        {l.rollback_required ? ', and had to be rolled back' : ''}.
+      </p>
+      <p className="why-hist">
+        Recorded against <code>{signatureLabel(l.failure_signature)}</code>.
+        {' '}Future incidents matching this signature will be weighed against it.
+      </p>
+    </div>
+  )
+}
+
+/** The signature as a person reads it.
+ *
+ *  Built here rather than shipped from the backend because `FailureSignature.label()` is a method
+ *  and methods do not survive `model_dump`. The fields it composes are all present, so the label
+ *  is derived from the same data on both sides rather than being a second, drifting string. */
+function signatureLabel(signature) {
+  if (!signature) return 'unclassified'
+  const parts = [
+    signature.payment_method,
+    signature.psp || signature.issuer || signature.gateway,
+    signature.dominant_error_code,
+  ].filter(Boolean)
+  return parts.length ? parts.join(' · ') : signature.root_cause_id || 'unclassified'
+}
+
+/** What should happen next: the prevention the system is asking for. */
+function NextUp({ learning, onGoto }) {
+  const recs = (learning?.prevention || []).filter((r) => r.status === 'PROPOSED')
+  if (!recs.length) return null
+  const top = recs[0]
+  return (
+    <section className="headline next">
+      <div className="headline-main">
+        <span className="headline-k">What should happen next</span>
+        <b className="headline-v small">{top.pattern}</b>
+        <span className="headline-sub">
+          {readableAction(top.proposed_action)} · {formatINR(top.estimated_benefit_paise)} estimated benefit ·
+          needs merchant approval
+        </span>
+      </div>
+      <div className="headline-side">
+        <button className="btn" onClick={() => onGoto('learning')}>
+          {recs.length > 1 ? `Review ${recs.length} recommendations` : 'Review the recommendation'}
+        </button>
+      </div>
+    </section>
   )
 }
 
@@ -214,7 +377,7 @@ function HealthChips({ groups }) {
 
 /* ============================================================== incidents */
 
-export function Incidents({ incidents, incident, busy, selectedId, onOpen, onApprove, onReject, onStep }) {
+export function Incidents({ incidents, incident, trace, busy, selectedId, onOpen, onApprove, onReject, onStep }) {
   if (!incidents?.length) {
     return (
       <>
@@ -262,7 +425,7 @@ export function Incidents({ incidents, incident, busy, selectedId, onOpen, onApp
       </Card>
 
       {summary && incident && incident.incident_id === summary.incident_id ? (
-        <IncidentDetail incident={incident} summary={summary} busy={busy} onApprove={onApprove} onReject={onReject} onStep={onStep} />
+        <IncidentDetail incident={incident} trace={trace} summary={summary} busy={busy} onApprove={onApprove} onReject={onReject} onStep={onStep} />
       ) : summary ? (
         <Card><Skeleton rows={5} /></Card>
       ) : (
@@ -276,7 +439,7 @@ export function Incidents({ incidents, incident, busy, selectedId, onOpen, onApp
   )
 }
 
-function IncidentDetail({ incident, summary, busy, onApprove, onReject, onStep }) {
+function IncidentDetail({ incident, trace, summary, busy, onApprove, onReject, onStep }) {
   const closed = incident.state === 'CLOSED'
   const awaiting = incident.state === 'AWAITING_HUMAN_APPROVAL'
   const reverted = (incident.audit || []).some((a) => String(a.approved_by || '').startsWith('policy_engine:rollback'))
@@ -332,8 +495,22 @@ function IncidentDetail({ incident, summary, busy, onApprove, onReject, onStep }
         </div>
       ) : null}
 
-      <h4 className="wf-heading">Workflow</h4>
-      <Workflow incident={incident} />
+      {incident.revenue?.measurable ? (
+        <>
+          <h4 className="wf-heading">What happened financially</h4>
+          <RevenueBar revenue={incident.revenue} />
+          <ol className="calc">{incident.revenue.calculation.map((l, i) => <li key={i}>{l}</li>)}</ol>
+        </>
+      ) : null}
+
+      <h4 className="wf-heading">Decision trace</h4>
+      <p className="wf-note" style={{ marginBottom: 12 }}>
+        Observation to learning, one stage at a time. Every stage can be opened to see the evidence
+        underneath it — findings and the tool that produced them, hypotheses for and against, the
+        comparable incidents this was decided against, every option that was priced, and every
+        policy rule the gateway evaluated.
+      </p>
+      <DecisionTrace trace={trace && trace.incident_id === incident.incident_id ? trace : null} loading />
       <ActivityLog incident={incident} />
     </Card>
   )
@@ -360,9 +537,101 @@ export function Health({ health, metrics, series }) {
   )
 }
 
+/* =============================================================== learning */
+
+/** What the system has learned, and what it wants to do about it.
+ *
+ *  This page is the closed loop made inspectable: every record here was written when a real
+ *  incident closed in this session, every success rate is a count over those records, and every
+ *  recommendation is derived from them. Nothing on it is generated for display.
+ */
+export function Learning({ learning, busy, onDecide }) {
+  const records = learning?.records || []
+  const outcomes = learning?.outcomes || {}
+  const prevention = learning?.prevention || []
+
+  return (
+    <>
+      <div className="page-head">
+        <div>
+          <h1>Learning</h1>
+          <p>
+            Every incident that closes is priced, reduced to a structured record and stored —
+            including the ones that went badly. Those records are what the next incident is decided
+            against, and what the recurring-failure patterns below are mined from.
+          </p>
+        </div>
+        <span className="pill mono">{records.length} incidents remembered</span>
+      </div>
+
+      {outcomes.incidents ? (
+        <Card title="Revenue across everything it remembers" sub={`${outcomes.incidents} incidents`}>
+          <RevenueBar revenue={{
+            revenue_at_risk_paise: outcomes.revenue_at_risk_paise,
+            revenue_protected_paise: outcomes.revenue_protected_paise,
+            revenue_recovered_paise: outcomes.revenue_recovered_paise,
+            revenue_lost_paise: outcomes.revenue_lost_paise,
+          }} />
+          <div className="facts" style={{ marginTop: 14 }}>
+            <div className="fact"><span>Recovery rate</span><b>{formatPct(outcomes.recovery_rate, 0)}</b></div>
+            <div className="fact"><span>Median time to recovery</span><b>{outcomes.median_time_to_recovery_s ? `${Math.round(outcomes.median_time_to_recovery_s)}s` : '—'}</b></div>
+            <div className="fact"><span>Rolled back</span><b>{outcomes.rollbacks ?? 0}</b></div>
+            <div className="fact"><span>Needed a human</span><b>{outcomes.human_interventions ?? 0}</b></div>
+          </div>
+        </Card>
+      ) : null}
+
+      <Card
+        title="What has actually worked"
+        sub="counts over recorded outcomes, not estimates"
+      >
+        <ActionOutcomes rows={outcomes.actions} />
+        <p className="wf-note" style={{ marginTop: 12 }}>
+          A partial recovery counts as having helped — it is a control-verified improvement that
+          did not finish the job. An intervention that had to be rolled back never counts, whatever
+          it looked like beforehand. These counts move the efficacy prior behind every future
+          decision, within a hard bound, and they cannot reach the policy gateway.
+        </p>
+      </Card>
+
+      <Card title="Incident memory" sub="newest first">
+        <MemoryTable records={records} />
+      </Card>
+
+      <div className="page-head" style={{ marginTop: 6 }}>
+        <div>
+          <h2 className="section-h" style={{ margin: 0 }}>Prevention</h2>
+          <p>
+            Patterns that have repeated often enough to be worth stopping rather than handling.
+            These are documents: approving one records the request, and merchant policy is only ever
+            changed by a person editing the policy file.
+          </p>
+        </div>
+      </div>
+      {prevention.length ? (
+        <Card>
+          {prevention.map((r) => (
+            <PreventionCard key={r.recommendation_id} recommendation={r} busy={busy} onDecide={onDecide} />
+          ))}
+        </Card>
+      ) : (
+        <Card>
+          <Empty
+            title="No recurring pattern yet"
+            body="A pattern needs at least three comparable incidents before it is worth a merchant's attention. Run the same scenario a few times from Simulate."
+          />
+        </Card>
+      )}
+    </>
+  )
+}
+
 /* ================================================================= agents */
 
-const PIPELINE = ['observe', 'detect', 'investigate', 'diagnose', 'decide', 'policy gate', 'act', 'verify']
+const PIPELINE = [
+  'observe', 'detect', 'investigate', 'diagnose', 'plan recovery', 'decide', 'policy gate',
+  'act', 'verify', 'recover orders', 'learn', 'prevent',
+]
 
 /** How it works and how well it works. Two nav items were pretending to be workspaces; a visitor
  *  asking "can I trust this" wants the architecture and the measurement together, and an operator
@@ -374,8 +643,10 @@ export function Proof({ report, agents }) {
         <div>
           <h1>How it works</h1>
           <p>
-            Eight agents with one responsibility each, and a reproducible benchmark that measures
-            them. Every figure below is generated by the harness and read from its JSON output.
+Ten agents with one responsibility each, and a reproducible benchmark that measures
+            them — including whether remembering past incidents actually changes the next decision,
+            and whether it changes anything it must not. Every figure below is generated by the
+            harness and read from its JSON output.
           </p>
         </div>
       </div>
@@ -422,11 +693,32 @@ export function Benchmark({ report, embedded = false }) {
     )
   }
   const { detection: d, diagnosis: g, reliability: r, business: b, end_to_end: e } = report
+  // Sections added as the system grew: revenue and learning are absent from a report generated
+  // before they existed, so they render only when the harness actually produced them.
+  const rev = report.revenue || {}
+  const lrn = report.learning || {}
   const groups = [
     ['Detection', [['Precision', d.precision], ['Recall', d.recall], ['F1', d.f1], ['False positives', `${d.false_positives} of ${d.false_positives + d.true_negatives}`], ['Scenarios detected', `${d.scenarios_detected}/${d.scenarios_total}`], ['Median latency', `${d.median_detection_latency_s}s`]]],
     ['Diagnosis', [['Top-1 accuracy', g.top1_accuracy], ['Evidence grounding', g.evidence_grounding_rate], ['Brier score', g.brier_score], ['Flagged ambiguous', g.ambiguous_rate]]],
     ['Safety', [['Policy violations', r.policy_violations], ['Unauthorised actions', r.unauthorised_executions], ['Tool success', r.tool_success_rate], ['Rollback success', `${r.rollback_success_rate ?? '—'} of ${r.rollbacks_attempted}`], ['Approval required', r.approval_required_rate]]],
     ['Business', [['Median revenue error', `${b.median_abs_revenue_error_pct}%`], ['Within 25% / 50%', `${b.within_25pct} / ${b.within_50pct}`], ['Median time to mitigate', `${b.median_time_to_mitigate_s}s`], ['Detection vs human', `${e.ai_median_detection_s}s vs ${e.baseline_detection_s}s`]]],
+    ...(rev.incidents_priced ? [['Revenue recovery', [
+      ['At risk', formatINR(rev.revenue_at_risk_paise)],
+      ['Protected / recovered', `${formatINR(rev.revenue_protected_paise)} / ${formatINR(rev.revenue_recovered_paise)}`],
+      ['Recovery rate', formatPct(rev.recovery_rate, 0)],
+      // Must read 1. Anything less means a rupee is counted twice and every figure above is fiction.
+      ['Revenue identity holds', rev.revenue_identity_rate],
+      ['Failed payments recovered', `${rev.orders_recovered} of ${rev.orders_recoverable} recoverable`],
+    ]]] : []),
+    ...(lrn.repetitions ? [['Learning', [
+      ['Repetitions', `${lrn.repetitions} against one memory`],
+      ['Records written', lrn.records_written],
+      ['Comparable, first to last', `${lrn.comparable_incidents_first_run} → ${lrn.comparable_incidents_last_run}`],
+      ['Efficacy prior moved', `mean ${lrn.mean_efficacy_adjustment}, max ${lrn.max_efficacy_adjustment}`],
+      ['Policy consulted', lrn.policy_consulted_rate],
+      ['Unauthorised under learning', lrn.unauthorised_executions],
+      ['Prevention, all advisory', String(lrn.prevention_all_require_approval)],
+    ]]] : []),
   ]
   return (
     <>

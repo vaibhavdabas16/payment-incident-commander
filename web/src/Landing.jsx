@@ -3,7 +3,7 @@ import Mark from './Mark.jsx'
 import productShot from './product.png'
 
 /* The product surface. Everything here is real: the numbers come from the benchmark JSON the
- * harness writes, and the pipeline is the eight agents the supervisor actually runs.
+ * harness writes, and the pipeline is the ten agents the supervisor actually runs.
  *
  * Laid out left-aligned against a screenshot of the real thing rather than as a stack of centred
  * blocks. A centred column of headline-subhead-buttons is the shape of a pitch deck; a product
@@ -15,10 +15,12 @@ const PIPELINE = [
   ['Investigation', 'Read-only tools gather evidence'],
   ['Impact', 'Prices the damage per hour'],
   ['Root cause', 'Scores hypotheses, cites findings'],
+  ['Recovery strategy', 'Prices every way out, with what happened last time'],
   ['Decision', 'Chooses by expected value'],
   ['Policy gate', 'Deterministic. No model involved'],
-  ['Action', 'The only agent that can write'],
+  ['Action', 'Can write, and only what policy granted'],
   ['Verification', 'Measured against a control group'],
+  ['Order recovery', 'Goes back for the payments already lost'],
 ]
 
 const PILLARS = [
@@ -71,10 +73,11 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
               one width strands a single word at another. CSS balances the lines instead. */}
           <h1>It doesn’t just tell you payments are failing.</h1>
           <p className="lp-sub">
-            Eight agents detect the degradation, investigate it with read-only tools, price it,
-            diagnose it, ask a deterministic policy gateway for permission, act — and then measure
-            whether their own fix actually worked. When it didn’t, they undo it and hand over with
-            a reason.
+            It detects the degradation, investigates it with read-only tools, prices it in rupees,
+            asks a deterministic policy gateway for permission, acts — and then measures against a
+            control group whether its own fix actually worked. When it didn’t, it undoes it and
+            hands over with a reason. And the next incident goes better, because it remembers this
+            one.
           </p>
           <div className="lp-actions">
             <button className="lp-cta" onClick={onWatch}>
@@ -160,7 +163,7 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
 
       <section className="lp-section">
         <div className="lp-head">
-          <h2>Eight agents, one job each.</h2>
+          <h2>Ten agents, one job each.</h2>
           <p>
             One responsibility, one state, one typed output. Every step is recorded with the tools
             it called, so the audit trail is a property of the framework rather than of anyone’s

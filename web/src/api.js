@@ -80,6 +80,13 @@ export const api = {
     json(`/api/control/${command}${speedup ? `?speedup=${speedup}` : ''}`, { method: 'POST' }),
   evaluation: () => json('/api/evaluation'),
   notifications: () => json('/api/notifications'),
+  // The closed loop: what the system has learned, what it wants to prevent, and the full
+  // decision trace for one incident.
+  learning: () => json('/api/learning'),
+  prevention: () => json('/api/prevention'),
+  preventionDecision: (id, decision) =>
+    json(`/api/prevention/${id}/${decision}`, { method: 'POST' }),
+  trace: (id) => json(`/api/incidents/${id}/trace`),
 }
 
 // Formats paise the way an Indian merchant reads money: lakh and crore.
@@ -92,6 +99,25 @@ export function formatINR(paise, { compact = true } = {}) {
   if (abs >= 1e5) return `₹${(rupees / 1e5).toFixed(1)}L`
   if (abs >= 1000) return `₹${(rupees / 1000).toFixed(1)}K`
   return `₹${Math.round(rupees)}`
+}
+
+/** Format a trace fact using the unit the backend attached to it.
+ *
+ *  The unit travels with the value rather than being guessed from the label here: a renderer that
+ *  decides "protected" means rupees and "protects per hour" does not is a renderer that will
+ *  eventually print paise as a count. */
+export function formatFact(value, unit) {
+  if (value === null || value === undefined) return '—'
+  if (unit === 'paise') return formatINR(value)
+  if (unit === 'ratio') return formatPct(value, 0)
+  if (typeof value === 'boolean') return value ? 'yes' : 'no'
+  if (Array.isArray(value)) return value.length ? value.join(', ') : '—'
+  if (typeof value === 'object') {
+    const entries = Object.entries(value).filter(([, v]) => v !== null && v !== undefined)
+    return entries.length ? entries.map(([k, v]) => `${k.replace(/_/g, ' ')} ${v}`).join(', ') : '—'
+  }
+  if (typeof value === 'number') return Number.isInteger(value) ? value.toLocaleString() : String(value)
+  return String(value)
 }
 
 export function formatPct(value, digits = 1) {

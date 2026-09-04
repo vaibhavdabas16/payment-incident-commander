@@ -1,4 +1,5 @@
-import { formatClock, formatINR, formatPct } from './api.js'
+import { Fragment } from 'react'
+import { formatClock, formatFact, formatINR, formatPct } from './api.js'
 
 /* Shared primitives. Everything here renders data the agents actually recorded — there is no
  * placeholder content, and anything the system has not produced yet renders as an empty or
@@ -205,175 +206,333 @@ export function Hypotheses({ rootCause }) {
   )
 }
 
-/* ---------------------------------------------------------------- workflow */
+/* ------------------------------------------------------------------ trace */
 
 /** The whole incident, stage by stage, in the order the supervisor ran it.
  *
- *  A summary card tells you what was decided; this tells you how. Each stage is either done,
- *  running, blocked or not reached, and carries the evidence that stage produced — so the claim
- *  and the working behind it sit together instead of the working living on another page.
+ *  Rendered from `/api/incidents/{id}/trace` rather than assembled here. The trace is defined once,
+ *  in Python, next to the objects it describes; a second definition in JavaScript would drift, and
+ *  the half that drifted would be the half a person is actually reading.
+ *
+ *  Every stage is either reached or not, carries the facts the agents recorded, and can be opened
+ *  to see the evidence underneath. Nothing is summarised into a sentence with no working behind it.
  */
-export function Workflow({ incident }) {
-  if (!incident) return <Skeleton rows={5} />
-  const a = incident.anomaly
-  const e = incident.evidence
-  const im = incident.impact
-  const rc = incident.root_cause
-  const p = incident.proposal
-  const pd = incident.policy_decision
-  const ar = incident.action_result
-  const v = incident.verification
-  const esc = incident.escalation
-  const steps = incident.steps || []
-  const stepFor = (agent) => steps.find((s) => s.agent === agent)
-  // How many times each agent ran. Collapsing the pipeline into one row per stage is what
-  // makes it readable, but it also hides a second attempt - and an incident that proposed,
-  // acted, failed verification and went round again is a materially different story from one
-  // that went straight through.
-  const runsFor = (agent) => steps.filter((s) => s.agent === agent).length
-
-  const stages = [
-    {
-      key: 'detect',
-      title: 'Detection',
-      done: !!a,
-      lead: a ? `Success rate ${formatPct(a.current_value)} against a baseline of ${formatPct(a.baseline)}.` : null,
-      meta: a ? `z=${a.z_score} · confidence ${a.confidence} · n=${a.sample_size} · ${a.detection_method?.join(' + ')}` : null,
-      tag: a ? { tone: severityTone(a.severity), text: a.severity } : null,
-    },
-    {
-      key: 'investigate',
-      title: 'Investigation',
-      done: !!e,
-      lead: e ? `${e.findings.length} findings from ${e.tools_used.length} read-only tools. Dominant failure code ${e.dominant_error_code || 'n/a'} (${formatPct(e.dominant_error_share, 0)} of failures).` : null,
-      body: e ? (
-        <ul className="wf-list">
-          {e.findings.slice(0, 4).map((f) => (
-            <li key={f.finding_id}><code>{f.finding_id}</code>{f.statement}</li>
-          ))}
-        </ul>
-      ) : null,
-    },
-    {
-      key: 'impact',
-      title: 'Business impact',
-      done: !!im,
-      lead: im ? `${formatINR(im.revenue_at_risk_per_hour_paise)} per hour at risk, from ${im.transactions_at_risk_per_hour.toLocaleString()} extra failures affecting ${im.affected_customers_estimate.toLocaleString()} customers an hour.` : null,
-      body: im ? <ol className="calc">{im.calculation.map((l, i) => <li key={i}>{l}</li>)}</ol> : null,
-    },
-    {
-      key: 'diagnose',
-      title: 'Root cause',
-      done: !!rc,
-      lead: rc ? `${rc.most_likely_root_cause}. ${confidenceInWords(rc.confidence)}${rc.ambiguous ? ', flagged ambiguous' : ''}.` : null,
-      body: rc ? <Hypotheses rootCause={rc} /> : null,
-      meta: rc ? `reasoner ${rc.reasoner}` : null,
-    },
-    {
-      key: 'decide',
-      title: 'Decision',
-      done: !!p,
-      lead: p ? `${readableAction(p.action)} ${paramText(p.parameters)}` : null,
-      body: p ? <p className="wf-note">{p.rationale}</p> : null,
-      meta: p ? `expected value ${formatINR(p.expected_value_paise)} · protects ${formatINR(p.expected_revenue_protected_per_hour_paise)}/hr · risk ${p.risk_score}` : null,
-    },
-    {
-      key: 'policy',
-      title: 'Policy gate',
-      done: !!pd,
-      blocked: pd ? pd.requires_human : false,
-      failed: pd ? !pd.approved && !pd.requires_human : false,
-      lead: pd ? pd.reason : null,
-      meta: pd?.bound_by?.length ? `bound by ${pd.bound_by.join(', ')}` : null,
-      tag: pd ? { tone: pd.approved ? 'ok' : pd.requires_human ? 'warn' : 'crit', text: pd.outcome.replace(/_/g, ' ').toLowerCase() } : null,
-    },
-    {
-      key: 'execute',
-      title: 'Execution',
-      done: !!ar,
-      failed: ar ? !ar.success : false,
-      lead: ar ? `${readableAction(ar.action)} ${paramText(ar.parameters)}` : null,
-      meta: ar ? `adapter ${ar.adapter}${ar.inverse_action ? ' · reversible' : ''}` : null,
-    },
-    {
-      key: 'verify',
-      title: 'Verification',
-      done: !!v,
-      failed: v ? !['RECOVERED', 'PARTIALLY_RECOVERED'].includes(v.status) : false,
-      lead: v ? v.explanation : null,
-      meta: v ? (v.control_used
-        ? `treated ${formatPct(v.treated_success_rate)} vs control ${formatPct(v.control_success_rate)} · p=${v.p_value} · n=${v.treated_sample}/${v.control_sample}`
-        : `${formatPct(v.before_success_rate)} → ${formatPct(v.after_success_rate)} · p=${v.p_value}`) : null,
-      tag: v ? { tone: ['RECOVERED', 'PARTIALLY_RECOVERED'].includes(v.status) ? 'ok' : 'crit', text: v.status.replace(/_/g, ' ').toLowerCase() } : null,
-    },
-  ]
-
-  if (esc) {
-    stages.push({
-      key: 'escalate',
-      title: 'Handed to a human',
-      done: true,
-      blocked: true,
-      // The specific case first. The category still shows, as a label rather than an
-      // explanation, because grouping handovers by kind is useful once you know the facts.
-      lead: esc.because || esc.reason,
-      meta: `${esc.reason} · ${esc.recommended_human_action}`,
-      tag: { tone: 'warn', text: esc.urgency },
-    })
-  }
-
-  // The last stage is always the outcome, so the workflow ends by saying how it ended rather
-  // than trailing off after whatever the final agent happened to be.
-  const closed = incident.state === 'CLOSED'
-  const reverted = (incident.audit || []).some((x) => String(x.approved_by || '').startsWith('policy_engine:rollback'))
-  stages.push({
-    key: 'outcome',
-    title: 'Outcome',
-    done: closed,
-    blocked: closed && (reverted || !!esc),
-    lead: closed
-      ? (reverted ? 'The fix did not help, so the agent reverted its own change and handed over.'
-        : v?.status === 'RECOVERED' ? 'Payments recovered, verified against a concurrent control group.'
-        : v?.status === 'PARTIALLY_RECOVERED' ? 'Partly recovered — not claimed as a success, and the incident stayed open.'
-        : esc ? 'Handed to a human with the evidence attached.'
-        : 'Closed.')
-      : incident.state === 'AWAITING_HUMAN_APPROVAL'
-        ? 'Waiting for a human to approve or reject the proposed action.'
-        : 'Still in progress.',
-    tag: closed ? { tone: reverted ? 'warn' : v?.status === 'RECOVERED' ? 'ok' : esc ? 'warn' : 'mute', text: (incident.outcome || 'closed').replace(/_/g, ' ').toLowerCase() } : null,
-  })
-
-  // The stage after the last completed one is what is happening now.
-  const firstPending = stages.findIndex((s) => !s.done)
-  if (firstPending >= 0 && incident.state !== 'CLOSED') stages[firstPending].running = true
+export function DecisionTrace({ trace, loading = false }) {
+  if (!trace) return loading ? <Skeleton rows={7} /> : null
+  const stages = trace.stages || []
+  const firstPending = stages.findIndex((x) => !x.reached)
+  const running = trace.state !== 'CLOSED' ? firstPending : -1
 
   return (
     <ol className="wf">
-      {stages.map((s, i) => {
-        const state = s.failed ? 'failed' : s.blocked && s.done ? 'blocked' : s.done ? 'done' : s.running ? 'running' : 'todo'
-        const agent = ({ detect: 'detection', investigate: 'investigation', impact: 'impact', diagnose: 'root_cause', decide: 'decision', execute: 'action', verify: 'verification', escalate: 'escalation' })[s.key]
-        const step = stepFor(agent)
-        const runs = agent ? runsFor(agent) : 0
+      {stages.map((stage, i) => {
+        const state = !stage.reached
+          ? i === running ? 'running' : 'todo'
+          : stage.tone === 'warn' ? 'blocked'
+          : stage.tone === 'alert' ? 'failed'
+          : 'done'
+        const facts = (stage.facts || []).filter((f) => f.value !== null && f.value !== undefined && f.value !== '')
         return (
-          <li className={`wf-step ${state}`} key={s.key}>
-            <span className="wf-dot">{state === 'done' ? '✓' : state === 'failed' ? '✕' : state === 'blocked' ? '!' : i + 1}</span>
+          <li className={`wf-step ${state}`} key={stage.key}>
+            <span className="wf-dot">
+              {state === 'done' ? '✓' : state === 'failed' ? '!' : state === 'blocked' ? '!' : i + 1}
+            </span>
             <div className="wf-main">
               <div className="wf-title">
-                {s.title}
-                {s.tag ? <Tag tone={s.tag.tone}>{s.tag.text}</Tag> : null}
+                {stage.title}
                 {state === 'running' ? <Tag tone="agent">working</Tag> : null}
                 {state === 'todo' ? <Tag tone="mute">not reached</Tag> : null}
-                {runs > 1 ? <Tag tone="warn">{`ran ${runs}\u00d7`}</Tag> : null}
-                {step ? <span className="wf-when">{formatClock(step.started_at)}</span> : null}
               </div>
-              {s.lead ? <div className="wf-lead">{s.lead}</div> : null}
-              {s.body ? <div className="wf-body">{s.body}</div> : null}
-              {s.meta ? <div className="wf-meta">{s.meta}</div> : null}
+              <div className="wf-lead">{stage.headline}</div>
+              {facts.length ? (
+                <div className="facts">
+                  {facts.map((f) => (
+                    <div className="fact" key={f.label}>
+                      <span>{f.label}</span>
+                      <b>{formatFact(f.value, f.unit)}</b>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {stage.evidence?.length ? (
+                <div className="wf-meta">{stage.evidence.slice(0, 10).join(' · ')}
+                  {stage.evidence.length > 10 ? ` · +${stage.evidence.length - 10} more` : ''}
+                </div>
+              ) : null}
+              <StageDetail stage={stage} />
             </div>
           </li>
         )
       })}
     </ol>
+  )
+}
+
+/** The working behind one stage, in the shape that stage's evidence actually has. */
+function StageDetail({ stage }) {
+  const detail = stage.detail
+  if (!detail || (Array.isArray(detail) && !detail.length)) return null
+  const label = DETAIL_LABEL[stage.key] || 'Show the working'
+  return (
+    <details className="more">
+      <summary>{label}</summary>
+      <StageBody stage={stage} detail={detail} />
+    </details>
+  )
+}
+
+const DETAIL_LABEL = {
+  evidence: 'Every finding, and the tool that produced it',
+  hypothesis: 'Every hypothesis considered, for and against',
+  history: 'The comparable incidents this was decided against',
+  strategies: 'Every option that was priced',
+  decision: 'The options not chosen',
+  policy: 'Every rule the gateway evaluated',
+  revenue: 'The arithmetic, line by line',
+  learning: 'The record written to memory',
+}
+
+function StageBody({ stage, detail }) {
+  if (stage.key === 'evidence') {
+    return (
+      <ul className="wf-list">
+        {detail.map((f) => (
+          <li key={f.id}><code>{f.id}</code>{f.statement}<i className="src">{f.tool}</i></li>
+        ))}
+      </ul>
+    )
+  }
+  if (stage.key === 'hypothesis') {
+    return (
+      <div className="conf">
+        {detail.map((h, i) => (
+          <div className={`conf-row ${i === 0 ? 'top' : ''}`} key={h.cause_id}>
+            <span className="conf-label">
+              {h.cause}
+              {h.memory_adjustment ? (
+                <i className="src">memory {h.memory_adjustment > 0 ? '+' : ''}{h.memory_adjustment}</i>
+              ) : null}
+            </span>
+            <span className="conf-track">
+              <span className="conf-fill" style={{ width: `${Math.round((h.probability || 0) * 100)}%` }} />
+            </span>
+            <span className="conf-v">{formatPct(h.probability, 0)}</span>
+          </div>
+        ))}
+      </div>
+    )
+  }
+  if (stage.key === 'history') return <SimilarIncidents rows={detail} />
+  if (stage.key === 'strategies') return <Strategies rows={detail} />
+  if (stage.key === 'policy') {
+    return (
+      <ul className="wf-list">
+        {detail.map((r) => (
+          <li key={r.rule}><code>{r.outcome.toLowerCase().replace(/_/g, ' ')}</code>{r.reason}<i className="src">{r.rule}</i></li>
+        ))}
+      </ul>
+    )
+  }
+  if (Array.isArray(detail) && detail.every((x) => typeof x === 'string')) {
+    return <ol className="calc">{detail.map((line, i) => <li key={i}>{line}</li>)}</ol>
+  }
+  return <KeyValues data={detail} />
+}
+
+/** Past incidents, with what was tried and what it got. This is the historical evidence itself —
+ *  a claim about history should be one click from the incidents that make it true. */
+export function SimilarIncidents({ rows, compact = false }) {
+  if (!rows?.length) return <p className="wf-note">No comparable incidents in memory.</p>
+  return (
+    <div className="rows">
+      {rows.map((r) => (
+        <div className="row" key={r.incident_id}>
+          <span className="row-id">{r.incident_id}</span>
+          <Tag tone={r.succeeded ? 'ok' : r.rollback_required ? 'crit' : 'warn'}>
+            {(r.verification_result || r.outcome || '').replace(/_/g, ' ').toLowerCase()}
+          </Tag>
+          <span className="row-main">
+            {readableAction(r.action_taken)}
+            {r.magnitude ? ` ${r.magnitude}%` : ''}
+            {compact ? '' : ` · ${r.matched_on}`}
+          </span>
+          <span className="row-num">{formatINR(r.revenue_protected_paise + r.revenue_recovered_paise)}</span>
+          <span className="row-num dim">{Math.round((r.similarity || 0) * 100)}% match</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Every option the system priced, best first, with the history behind each one. */
+export function Strategies({ rows }) {
+  if (!rows?.length) return null
+  return (
+    <div className="rows">
+      {rows.map((r) => {
+        const h = r.historical_support
+        return (
+          <div className="row wide" key={r.strategy_id}>
+            <span className="row-id">{r.strategy_id}</span>
+            <span className="row-main">
+              <b>{readableAction(r.action)}{r.magnitude != null ? ` ${r.magnitude}%` : ''}</b>
+              {r.target && r.target !== 'none' ? <i className="src">{r.target}</i> : null}
+              <span className="row-sub">{r.reasoning}</span>
+              {h && h.matched_incidents ? (
+                <span className="row-sub hist">
+                  History: {h.stats.helped}/{h.stats.attempts} comparable incidents improved
+                  {h.stats.rollbacks ? `, ${h.stats.rollbacks} rolled back` : ''}
+                  {' · '}prior {h.efficacy_adjustment > 0 ? '+' : ''}{h.efficacy_adjustment}
+                </span>
+              ) : null}
+            </span>
+            <span className="row-num">{formatINR(r.expected_value_paise)}</span>
+            <span className="row-num dim">risk {r.risk}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function KeyValues({ data }) {
+  const entries = Array.isArray(data)
+    ? data.map((v, i) => [String(i + 1), v])
+    : Object.entries(data || {})
+  return (
+    <dl className="kv">
+      {entries.slice(0, 24).map(([k, v]) => (
+        <Fragment key={k}>
+          <dt>{k.replace(/_/g, ' ')}</dt>
+          <dd>{typeof v === 'object' && v !== null ? JSON.stringify(v).slice(0, 160) : formatFact(v)}</dd>
+        </Fragment>
+      ))}
+    </dl>
+  )
+}
+
+/* ------------------------------------------------------------- money */
+
+/** The money, which is the story. Four figures that add up, and say so. */
+export function RevenueBar({ revenue, compact = false }) {
+  if (!revenue || !revenue.revenue_at_risk_paise) return null
+  const risk = revenue.revenue_at_risk_paise
+  const pct = (v) => `${Math.max(0, Math.min(100, (v / risk) * 100))}%`
+  return (
+    <div className={`money ${compact ? 'compact' : ''}`}>
+      <div className="money-bar" role="img"
+           aria-label={`${formatINR(revenue.revenue_protected_paise)} protected, ${formatINR(revenue.revenue_recovered_paise)} recovered, ${formatINR(revenue.revenue_lost_paise)} lost`}>
+        <span className="seg protected" style={{ width: pct(revenue.revenue_protected_paise) }} />
+        <span className="seg recovered" style={{ width: pct(revenue.revenue_recovered_paise) }} />
+        <span className="seg lost" style={{ width: pct(revenue.revenue_lost_paise) }} />
+      </div>
+      <div className="money-legend">
+        <span><i className="dot protected" />Protected <b>{formatINR(revenue.revenue_protected_paise)}</b></span>
+        <span><i className="dot recovered" />Recovered <b>{formatINR(revenue.revenue_recovered_paise)}</b></span>
+        <span><i className="dot lost" />Lost <b>{formatINR(revenue.revenue_lost_paise)}</b></span>
+      </div>
+    </div>
+  )
+}
+
+/* -------------------------------------------------------------- learning */
+
+/** Everything the system has learned, newest first. */
+export function MemoryTable({ records }) {
+  if (!records?.length) {
+    return (
+      <Empty
+        title="Nothing learned yet"
+        body="Every incident that closes is priced, reduced to a structured record and stored here — including the ones that went badly. Run an incident from Simulate."
+      />
+    )
+  }
+  return (
+    <div className="rows">
+      {records.map((r) => (
+        <div className="row wide" key={r.incident_id}>
+          <span className="row-id">{r.incident_id}</span>
+          <Tag tone={r.succeeded ? 'ok' : r.rollback_required ? 'crit' : 'warn'}>
+            {(r.verification || '').replace(/_/g, ' ').toLowerCase()}
+          </Tag>
+          <span className="row-main">
+            <b>{readableAction(r.action)}{r.magnitude != null ? ` ${r.magnitude}%` : ''}</b>
+            <span className="row-sub">{r.signature} · {r.root_cause}</span>
+          </span>
+          <span className="row-num">{formatPct(r.recovery_rate, 0)}</span>
+          <span className="row-num dim">{formatINR(r.revenue_at_risk_paise)} at risk</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** How each action has actually performed, which is the thing future decisions are weighed on. */
+export function ActionOutcomes({ rows }) {
+  if (!rows?.length) return <p className="wf-note">No action has been tried enough times to have a record yet.</p>
+  return (
+    <div className="rows">
+      {rows.map((r) => (
+        // Its own three-column grid rather than the five-column `.row`: with three children in a
+        // five-column layout the band label landed in the count's column and overprinted it.
+        <div className="row outcome" key={`${r.action}-${r.magnitude_band}`}>
+          <span className="row-main">
+            <b>{readableAction(r.action)}</b>
+            {r.magnitude_band !== 'any' ? <i className="src">{r.magnitude_band}</i> : null}
+          </span>
+          <span className="row-num">{r.helped}/{r.attempts} helped</span>
+          <span className="row-num dim">
+            {r.successes} fully recovered{r.rollbacks ? ` · ${r.rollbacks} rolled back` : ''}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** A recurring failure and the preventive change it argues for.
+ *
+ *  The authority line is not decoration. Approving one of these records a request; it does not
+ *  change the merchant's policy, and the card says so where somebody deciding will read it. */
+export function PreventionCard({ recommendation, busy, onDecide }) {
+  const r = recommendation
+  const decided = r.status !== 'PROPOSED'
+  return (
+    <div className={`rec ${decided ? 'decided' : ''}`}>
+      <div className="rec-top">
+        <Tag tone={r.status === 'ACKNOWLEDGED' ? 'ok' : r.status === 'DISMISSED' ? 'mute' : 'warn'}>
+          {r.status.toLowerCase()}
+        </Tag>
+        <span className="rec-p">{r.occurrences} occurrences · {r.recommendation_id}</span>
+      </div>
+      <h4>{r.pattern}</h4>
+      <ul className="wf-list">
+        {r.conditions.map((c) => <li key={c}>when {c}</li>)}
+      </ul>
+      <div className="facts">
+        <div className="fact"><span>Proposed</span><b>{readableAction(r.proposed_action)} {paramText(r.proposed_parameters)}</b></div>
+        <div className="fact"><span>Historical loss</span><b>{formatINR(r.historical_revenue_lost_paise)}</b></div>
+        <div className="fact"><span>Estimated benefit</span><b>{formatINR(r.estimated_benefit_paise)}</b></div>
+      </div>
+      <details className="more">
+        <summary>The evidence behind this</summary>
+        <ul className="wf-list">{r.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
+      </details>
+      <p className="rec-authority">
+        Advisory. Applying this means a person editing the merchant policy file — approving here
+        records the request and changes nothing.
+      </p>
+      {decided ? (
+        <p className="rec-p">{r.status.toLowerCase()} by {r.acknowledged_by}</p>
+      ) : (
+        <div className="rec-actions">
+          <button className="btn primary" disabled={busy} onClick={() => onDecide(r, 'accept')}>
+            Record as accepted
+          </button>
+          <button className="btn" disabled={busy} onClick={() => onDecide(r, 'dismiss')}>Dismiss</button>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -449,8 +608,26 @@ export function confidenceInWords(c) {
   return `Low confidence (${pct})`
 }
 
+/** The headline facts, money first.
+ *
+ *  A closed incident is a financial outcome and an open one is a financial exposure, so the two
+ *  get different rows. Showing "revenue at risk per hour" on an incident that finished twenty
+ *  minutes ago describes a threat that no longer exists. */
 export function impactFacts(incident) {
   const im = incident?.impact
+  const rev = incident?.revenue
+  if (rev && rev.measurable) {
+    const orders = incident?.order_recovery
+    return [
+      ['Revenue at risk', formatINR(rev.revenue_at_risk_paise)],
+      ['Protected', formatINR(rev.revenue_protected_paise)],
+      ['Recovered', formatINR(rev.revenue_recovered_paise)],
+      ['Recovery', formatPct(rev.recovery_rate, 0)],
+      ...(orders && orders.recovered
+        ? [['Payments rescued', orders.recovered.toLocaleString()]]
+        : []),
+    ]
+  }
   if (!im) return []
   return [
     ['Revenue at risk', `${formatINR(im.revenue_at_risk_per_hour_paise)}/hr`],

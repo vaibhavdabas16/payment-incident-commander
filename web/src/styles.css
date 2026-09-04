@@ -1126,3 +1126,90 @@ details.more[open] > summary { margin-bottom: 10px; }
 .idle-cta span { display: block; font-size: 12.5px; color: var(--text-2); max-width: 62ch; line-height: 1.55; }
 
 .section-h { font-size: 13px; font-weight: 600; margin: 6px 0 2px; color: var(--text-2); }
+
+/* ============================================================== closed loop
+ *
+ * The revenue headline, the money bar, the "why this action" panels and the record rows the
+ * learning view is built from. The palette is the one already in use: one accent, and status
+ * colour used only where something is actually good or bad.
+ */
+
+.headline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  padding: 20px 24px;
+}
+.headline.alert { border-color: color-mix(in srgb, var(--crit) 35%, transparent); background: linear-gradient(180deg, var(--crit-bg), transparent 65%), var(--surface); }
+.headline.next { background: var(--surface-2); }
+@media (max-width: 1040px) { .headline { grid-template-columns: minmax(0, 1fr); } }
+
+.headline-main { min-width: 0; }
+.headline-k { display: block; font-size: 11.5px; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; }
+.headline-v { display: block; margin-top: 6px; font-family: var(--mono); font-size: 40px; font-weight: 500; letter-spacing: -0.03em; line-height: 1.05; }
+.headline-v.small { font-size: 18px; letter-spacing: -0.015em; font-family: var(--sans, inherit); font-weight: 600; }
+.headline-v i { font-style: normal; font-size: 17px; color: var(--text-3); margin-left: 6px; }
+.headline-sub { display: block; margin-top: 8px; font-size: 13px; color: var(--text-2); line-height: 1.55; }
+.headline-side { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+
+/* --- the money bar: three segments that add up to what was at risk --- */
+.money { display: flex; flex-direction: column; gap: 9px; }
+.money-bar { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--surface-3); }
+.money.compact .money-bar { height: 7px; }
+.money .seg { height: 100%; transition: width 0.6s cubic-bezier(0.32, 0.72, 0, 1); }
+.money .seg.protected { background: var(--ok); }
+.money .seg.recovered { background: var(--info); }
+.money .seg.lost { background: color-mix(in srgb, var(--crit) 55%, transparent); }
+.money-legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 11.5px; color: var(--text-3); }
+.money-legend b { font-family: var(--mono); color: var(--text-2); margin-left: 5px; }
+.money-legend .dot { width: 7px; height: 7px; border-radius: 2px; display: inline-block; margin-right: 6px; }
+.money-legend .dot.protected { background: var(--ok); }
+.money-legend .dot.recovered { background: var(--info); }
+.money-legend .dot.lost { background: color-mix(in srgb, var(--crit) 55%, transparent); }
+.money.compact { margin: 16px 0 4px; }
+
+/* --- facts: a compact label/value grid used by the trace and the cards --- */
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(148px, 1fr)); gap: 10px 16px; margin-top: 10px; }
+.fact span { display: block; font-size: 11px; color: var(--text-3); }
+.fact b { font-family: var(--mono); font-size: 12.5px; font-weight: 500; overflow-wrap: anywhere; }
+
+/* --- why this action / what it learned --- */
+.why { margin: 18px 0 6px; padding: 13px 15px; border-left: 2px solid var(--line-strong); background: var(--surface-2); border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+.why.learned { border-left-color: color-mix(in srgb, var(--info) 55%, transparent); }
+.why-k { font-size: 11px; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 6px; }
+.why p { font-size: 12.5px; color: var(--text-2); line-height: 1.6; }
+.why p + p { margin-top: 6px; }
+.why-hist { color: var(--text-3); }
+.why code { font-family: var(--mono); font-size: 11.5px; color: var(--text-2); }
+
+/* --- record rows: memory, comparable incidents, priced strategies --- */
+.rows { display: flex; flex-direction: column; }
+.row { display: grid; grid-template-columns: 74px auto minmax(0, 1fr) 96px 118px; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 12.5px; }
+.row.wide { grid-template-columns: 74px auto minmax(0, 1fr) 96px 118px; align-items: start; }
+.row:last-child { border-bottom: none; }
+.row-id { font-family: var(--mono); font-size: 11.5px; color: var(--text-3); }
+.row-main { min-width: 0; color: var(--text-2); }
+.row-main b { color: var(--text); font-weight: 550; text-transform: capitalize; }
+.row-sub { display: block; margin-top: 3px; font-size: 11.5px; color: var(--text-3); line-height: 1.5; }
+.row-sub.hist { color: var(--info); }
+.row-num { font-family: var(--mono); font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+.row-num.dim { color: var(--text-3); font-size: 11.5px; }
+@media (max-width: 900px) { .row, .row.wide { grid-template-columns: 74px auto minmax(0, 1fr); } .row-num { text-align: left; } }
+
+.src { font-style: normal; font-family: var(--mono); font-size: 11px; color: var(--text-3); margin-left: 7px; }
+
+/* --- prevention --- */
+.rec.decided { opacity: 0.72; }
+.rec-authority { margin-top: 10px; font-size: 11.5px; color: var(--text-3); line-height: 1.55; }
+
+/* A row's last column must not run under the card edge. `minmax(0, …)` on the flexible column is
+ * what actually lets the grid shrink; without it the content column refuses to give ground and
+ * pushes the numbers out of the card. */
+.rows { min-width: 0; }
+.row, .row.wide { grid-template-columns: 74px auto minmax(0, 1fr) minmax(88px, auto) minmax(96px, auto); }
+.row.outcome { grid-template-columns: minmax(0, 1fr) minmax(88px, auto) minmax(150px, auto); }
+.row-main b { overflow-wrap: anywhere; }
