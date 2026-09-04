@@ -173,21 +173,51 @@ class AuditRow(Base):
 
 
 class IncidentMemoryRow(Base):
+    """One learned incident.
+
+    The columns are the query surface — merchant, signature, action, outcome, money — and `record`
+    holds the complete `IncidentOutcomeRecord` as JSON. Splitting it this way means retrieval can
+    filter in SQL without the schema having to grow a column every time the record does, and a
+    reloaded memory is byte-identical to the one that was written rather than a lossy projection
+    of it.
+    """
+
     __tablename__ = "incident_memory"
 
     incident_id: Mapped[str] = mapped_column(String(32), primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime)
-    summary: Mapped[str] = mapped_column(Text, default="")
-    features: Mapped[str] = mapped_column(Text, default="{}")
+    merchant_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    signature_key: Mapped[str] = mapped_column(String(256), default="", index=True)
     root_cause_id: Mapped[str] = mapped_column(String(64), default="")
-    root_cause: Mapped[str] = mapped_column(Text, default="")
     action_taken: Mapped[str] = mapped_column(String(48), default="")
-    action_parameters: Mapped[str] = mapped_column(Text, default="{}")
     outcome: Mapped[str] = mapped_column(String(32), default="")
-    recovery_time_s: Mapped[float | None] = mapped_column(Float, nullable=True)
-    revenue_protected_per_hour_paise: Mapped[int] = mapped_column(Integer, default=0)
-    human_override: Mapped[bool] = mapped_column(Boolean, default=False)
+    verification_result: Mapped[str] = mapped_column(String(32), default="")
+    revenue_protected_paise: Mapped[int] = mapped_column(Integer, default=0)
+    revenue_recovered_paise: Mapped[int] = mapped_column(Integer, default=0)
+    revenue_lost_paise: Mapped[int] = mapped_column(Integer, default=0)
+    rollback_required: Mapped[bool] = mapped_column(Boolean, default=False)
     false_positive: Mapped[bool] = mapped_column(Boolean, default=False)
+    record: Mapped[str] = mapped_column(Text, default="{}")
+
+
+class PreventionRecommendationRow(Base):
+    """A recurring-failure pattern and the preventive change it argues for.
+
+    Stored, never applied. Merchant policy lives in `merchant_policies.yaml` and is changed by a
+    person editing that file; this table records what the system would ask for and who, if anyone,
+    acknowledged it (ADR-011).
+    """
+
+    __tablename__ = "prevention_recommendations"
+
+    recommendation_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    signature_key: Mapped[str] = mapped_column(String(256), default="")
+    occurrences: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(24), default="PROPOSED")
+    acknowledged_by: Mapped[str] = mapped_column(String(64), default="")
+    payload: Mapped[str] = mapped_column(Text, default="{}")
 
 
 class GroundTruthRow(Base):
