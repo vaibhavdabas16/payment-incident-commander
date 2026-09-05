@@ -8,7 +8,24 @@ import productShot from './product.png'
  * Laid out left-aligned against a screenshot of the real thing rather than as a stack of centred
  * blocks. A centred column of headline-subhead-buttons is the shape of a pitch deck; a product
  * page should show the product before it argues for it, and the first honest thing this page can
- * say is "here is what you are about to look at". */
+ * say is "here is what you are about to look at".
+ *
+ * The order it argues in is deliberate. Money first, mechanism second: the loop below the hero is
+ * the thing a merchant is buying, and the ten agents are how it is built. Leading with the agent
+ * count describes the implementation to someone who asked what it does for them. */
+
+/* The customer-facing loop. Revenue at both ends on purpose - it opens with what is being lost
+ * and closes with what was kept, which is the whole product in eight words. */
+const LOOP = [
+  ['Revenue at risk', 'money', 'Payment failures priced in rupees, per hour'],
+  ['Detect', '', 'Three independent tests must agree'],
+  ['Diagnose', '', 'Cause established from evidence, not guessed'],
+  ['Recover', '', 'The safest strategy, inside merchant guardrails'],
+  ['Verify', '', 'Measured against an untouched control group'],
+  ['Revenue protected', 'money', 'Counted only once the recovery is proven'],
+  ['Learn', '', 'Every outcome recorded, good and bad'],
+  ['Prevent', '', 'Recurring patterns raised for approval'],
+]
 
 const PIPELINE = [
   ['Detection', 'Three independent tests must agree'],
@@ -26,24 +43,24 @@ const PIPELINE = [
 const PILLARS = [
   {
     k: '01',
-    title: 'The model cannot execute anything',
+    title: 'Autonomy within merchant-defined guardrails',
     body:
-      'Every action passes a deterministic policy gateway — plain Python evaluating the merchant’s own YAML, with no model anywhere in the path. The Action Agent physically cannot invoke a write tool without a decision naming that exact action.',
+      'AI proposes. Policy decides. Every recovery passes a deterministic policy gateway — plain Python evaluating the merchant’s own YAML, with no model anywhere in the path. The Action Agent physically cannot invoke a write tool without a decision naming that exact action.',
     proof: (r) =>
       r ? `${r.reliability.policy_violations} policy violations · ${r.reliability.unauthorised_executions} unauthorised executions` : null,
   },
   {
     k: '02',
-    title: 'It checks its own work, and undoes it',
+    title: 'Recovery is verified before it is counted',
     body:
-      'After acting it measures the result against a concurrent control group that was deliberately left alone, so the incident recovering on its own cannot be mistaken for the fix working. When the numbers do not improve it reverts its own change and hands over.',
+      'We do not claim recovery just because payment success improved. The intervention is compared with an untouched control group living through the same hour, so the incident recovering on its own cannot be mistaken for the recovery working. If it does not work, the system rolls it back and escalates with the evidence.',
     proof: (r) => (r ? `${formatPct(r.reliability.rollback_success_rate, 0)} of reverts succeed` : null),
   },
   {
     k: '03',
-    title: 'It knows when to say nothing',
+    title: 'It knows when there is no revenue to recover',
     body:
-      'A traffic-mix shift drops the headline success rate while every provider keeps working perfectly. Rerouting healthy traffic would add risk and protect no revenue, so the correct response is silence — and that restraint is measured, not assumed.',
+      'A traffic-mix shift drops the headline success rate while every provider keeps working perfectly. Rerouting healthy traffic would add risk and recover nothing, so the correct response is silence — and that restraint is measured, not assumed.',
     proof: (r) =>
       r ? `${r.detection.false_positives} false positives in ${r.detection.false_positives + r.detection.true_negatives} healthy windows` : null,
   },
@@ -59,7 +76,10 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
       <header className="lp-nav">
         <div className="lp-brand">
           <Mark size={22} />
-          Payment Incident Commander
+          <span className="lp-brand-name">
+            <b>Payment Incident Commander</b>
+            <i>Autonomous Payment Recovery &amp; Revenue Protection</i>
+          </span>
         </div>
         <button className="lp-cta sm" onClick={onEnter}>
           Open the console
@@ -68,24 +88,25 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
 
       <section className="lp-hero">
         <div className="lp-hero-copy">
-          <span className="lp-eyebrow">Razorpay AI Buildathon · autonomous payment operations</span>
+          <span className="lp-eyebrow">
+            Razorpay AI Buildathon · Autonomous Payment Recovery &amp; Revenue Protection
+          </span>
           {/* No hard break: the column narrows with the viewport, and a break that reads well at
               one width strands a single word at another. CSS balances the lines instead. */}
-          <h1>It doesn’t just tell you payments are failing.</h1>
+          <h1>Recover the revenue, not just the incident.</h1>
           <p className="lp-sub">
-            It detects the degradation, investigates it with read-only tools, prices it in rupees,
-            asks a deterministic policy gateway for permission, acts — and then measures against a
-            control group whether its own fix actually worked. When it didn’t, it undoes it and
-            hands over with a reason. And the next incident goes better, because it remembers this
-            one.
+            When payment failures put merchant revenue at risk, Payment Incident Commander detects
+            the problem, identifies the cause, chooses the safest recovery strategy, executes it
+            within merchant guardrails, verifies whether the intervention actually worked, and
+            learns from the outcome.
           </p>
           <div className="lp-actions">
             <button className="lp-cta" onClick={onWatch}>
-              Watch it handle an incident
+              Watch the recovery
             </button>
-            <a className="lp-ghost" href="https://github.com/vaibhavdabas16/payment-incident-commander">
-              Read the code
-            </a>
+            <button className="lp-ghost" onClick={onEnter}>
+              See how it works
+            </button>
           </div>
           {metrics ? (
             <span className="lp-live">
@@ -105,8 +126,40 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
         </figure>
       </section>
 
+      {/* The value story, before any argument for it. */}
+      <section className="lp-loop-band">
+        <ol className="lp-loop">
+          {LOOP.map(([name, kind, what], i) => (
+            <li key={name} className={kind}>
+              <span className="lp-loop-name">{name}</span>
+              <span className="lp-loop-what">{what}</span>
+              {i < LOOP.length - 1 ? <span className="lp-loop-arrow" aria-hidden="true" /> : null}
+            </li>
+          ))}
+        </ol>
+        <p className="lp-loop-foot">Detect. Recover. Verify. Learn.</p>
+      </section>
+
       {d ? (
         <dl className="lp-proof">
+          {/* A report generated before the revenue metrics existed has no `revenue` block, and
+              summing two undefineds would print NaN where a rupee figure belongs. */}
+          {report.revenue?.revenue_at_risk_paise ? (
+            <>
+              <div>
+                <dt>Revenue recovered</dt>
+                <dd>
+                  {formatINR(
+                    report.revenue.revenue_protected_paise + report.revenue.revenue_recovered_paise,
+                  )}
+                </dd>
+              </div>
+              <div>
+                <dt>Recovery rate</dt>
+                <dd>{formatPct(report.revenue.recovery_rate, 0)}</dd>
+              </div>
+            </>
+          ) : null}
           <div>
             <dt>Detection precision</dt>
             <dd>{formatPct(d.precision, 1)}</dd>
@@ -114,10 +167,6 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
           <div>
             <dt>Root-cause accuracy</dt>
             <dd>{formatPct(g.top1_accuracy, 1)}</dd>
-          </div>
-          <div>
-            <dt>Median detection</dt>
-            <dd>{d.median_detection_latency_s}s</dd>
           </div>
           <div>
             <dt>Unauthorised actions</dt>
@@ -132,7 +181,8 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
           <p>
             Success rate slips two points at 11pm. Somebody is paged, opens six dashboards, and
             starts guessing which of five providers, four routes, forty issuers or the deploy from
-            an hour ago is responsible. Every minute of that costs the merchant money.
+            an hour ago is responsible. Every minute of that is revenue leaving the merchant — and
+            the ticket closing is not the same thing as the money coming back.
           </p>
         </div>
         {e ? (
@@ -163,11 +213,11 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
 
       <section className="lp-section">
         <div className="lp-head">
-          <h2>Ten agents, one job each.</h2>
+          <h2>How the recovery is actually built.</h2>
           <p>
-            One responsibility, one state, one typed output. Every step is recorded with the tools
-            it called, so the audit trail is a property of the framework rather than of anyone’s
-            diligence.
+            Ten agents, one responsibility each, one typed output each. This is the implementation
+            beneath the loop above — every step recorded with the tools it called, so the audit
+            trail is a property of the framework rather than of anyone’s diligence.
           </p>
         </div>
         <ol className="lp-pipe">
@@ -229,19 +279,21 @@ export default function Landing({ report, metrics, onEnter, onWatch }) {
 
       <section className="lp-final">
         <Mark size={44} detail />
-        <h2>Break something and watch.</h2>
+        <h2>Put revenue at risk and watch it come back.</h2>
         <p>
-          Nine scenarios, including one where the obvious fix cannot possibly work. Nothing is
+          Nine scenarios, including one where the obvious recovery cannot possibly work. Nothing is
           scripted — the same detector, agents, policy gateway and tools run whether you are
           watching or the benchmark is.
         </p>
         <button className="lp-cta" onClick={onWatch}>
-          Break something and watch
+          Watch the recovery
         </button>
       </section>
 
       <footer className="lp-foot">
-        <span>Payment Incident Commander — built for the Razorpay AI Buildathon</span>
+        <span>
+          Payment Incident Commander · Autonomous Payment Recovery &amp; Revenue Protection
+        </span>
         <span>{report ? `${report.reasoner} reasoner · seeds ${report.seeds?.join(', ')}` : ''}</span>
       </footer>
     </div>

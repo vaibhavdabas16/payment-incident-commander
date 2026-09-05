@@ -1390,3 +1390,57 @@ details.more[open] > summary { margin-bottom: 10px; }
 .section-h { font-size: 15px; letter-spacing: -0.01em; margin-top: 6px; }
 .section-p { font-size: 13px; color: var(--text-2); line-height: 1.6; max-width: 78ch; margin-top: -8px; }
 .muted { font-size: 13px; color: var(--text-3); line-height: 1.6; }
+
+/* --- positioning: the safety claim, stated where the decision is made --- */
+.rec-guardrail {
+  margin-left: auto; font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3); white-space: nowrap;
+}
+@media (max-width: 760px) { .rec-guardrail { display: none; } }
+.rec-guard-lead { font-size: 12.5px; color: var(--text-2); line-height: 1.6; margin-bottom: 10px; }
+
+/* --------------------------------------------------- landing: the value loop
+ *
+ * Revenue at both ends, and the money steps carry the accent. The loop is the product; the agent
+ * pipeline further down is how it is built, and the two should not look alike.
+ */
+.lp-brand-name { display: inline-flex; flex-direction: column; line-height: 1.25; }
+.lp-brand-name b { font-weight: 600; }
+.lp-brand-name i {
+  font-style: normal; font-size: 10.5px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-3); font-weight: 500;
+}
+@media (max-width: 700px) { .lp-brand-name i { display: none; } }
+
+.lp-loop-band { padding: 30px 0 34px; border-top: 1px solid var(--line); }
+.lp-loop {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 10px;
+}
+@media (max-width: 1100px) { .lp-loop { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .lp-loop { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+.lp-loop li {
+  position: relative; padding: 14px 14px 15px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface);
+}
+.lp-loop li.money { border-color: color-mix(in srgb, var(--ok) 42%, transparent); background: var(--ok-bg); }
+.lp-loop-name { display: block; font-size: 12.5px; font-weight: 600; letter-spacing: -0.01em; }
+.lp-loop li.money .lp-loop-name { color: var(--ok); }
+.lp-loop-what { display: block; margin-top: 5px; font-size: 11px; color: var(--text-3); line-height: 1.45; }
+
+/* The arrow sits in the gutter, so it disappears at the end of a wrapped row rather than
+ * pointing at nothing. */
+.lp-loop-arrow {
+  position: absolute; right: -8px; top: 50%; width: 6px; height: 6px;
+  border-top: 1.5px solid var(--line-strong); border-right: 1.5px solid var(--line-strong);
+  transform: translateY(-50%) rotate(45deg);
+}
+.lp-loop li:nth-child(8n) .lp-loop-arrow { display: none; }
+@media (max-width: 1100px) { .lp-loop li:nth-child(4n) .lp-loop-arrow { display: none; } }
+@media (max-width: 620px) { .lp-loop li:nth-child(2n) .lp-loop-arrow { display: none; } }
+
+.lp-loop-foot {
+  margin-top: 16px; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--text-3); text-align: center;
+}

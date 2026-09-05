@@ -12,8 +12,9 @@ import {
 
 /* =========================================================== command centre */
 
-/** The executive view. Five seconds should answer: how much is at risk, how much came back, how
- *  much of that was automatic, what has been learned, and what could be prevented next.
+/** The revenue recovery command centre. Five seconds should answer: how much is at risk, how much
+ *  came back, how much of that was automatic, what has been learned, and what could be prevented
+ *  next.
  *
  *  It deliberately does not show the agent pipeline. Someone opening this page is asking about
  *  their money, not about the software; the pipeline is one click away on the incident itself. */
@@ -33,10 +34,11 @@ export function CommandCenter({
 
       <div className="page-head">
         <div>
-          <h1>Revenue operations</h1>
+          <h1>Revenue Recovery Command Center</h1>
           <p>
-            What the agent is protecting, what it has recovered, and what it has learned to do
-            about it. Every figure is measured from this merchant's own payment traffic.
+            Revenue at risk, revenue recovered, and what the agent has learned to do about it.
+            Every figure is measured from this merchant's own payment traffic — nothing here is
+            estimated or written by hand.
           </p>
         </div>
         <span className="pill mono">{metrics ? formatPct(metrics.success_rate) : '\u2014'} success rate</span>
@@ -53,7 +55,7 @@ export function CommandCenter({
         <ExecCard
           k="Revenue recovered"
           v={formatINR((rev?.revenue_protected_paise || 0) + (rev?.revenue_recovered_paise || 0))}
-          hint={rev?.incidents ? `across ${rev.incidents} closed incident${rev.incidents === 1 ? '' : 's'}` : 'nothing closed yet'}
+          hint={rev?.incidents ? `verified across ${rev.incidents} closed incident${rev.incidents === 1 ? '' : 's'}` : 'nothing closed yet'}
           tone="ok"
         />
         <ExecCard
@@ -70,16 +72,16 @@ export function CommandCenter({
         <ExecCard
           k="Auto-recovered"
           v={metrics?.auto_recovered ?? '\u2014'}
-          hint="closed without a person"
+          hint="recovered without a person"
         />
         <ExecCard
-          k="Learned patterns"
+          k="Learned recovery patterns"
           v={metrics?.learned_patterns ?? '\u2014'}
-          hint={`${metrics?.incidents_remembered ?? 0} incidents remembered`}
+          hint={`from ${metrics?.incidents_remembered ?? 0} recorded outcomes`}
           onClick={() => onGoto('learning')}
         />
         <ExecCard
-          k="Prevention"
+          k="Prevention opportunities"
           v={prevention.length}
           hint={prevention.length ? 'awaiting merchant approval' : 'none proposed'}
           tone={prevention.length ? 'warn' : ''}
@@ -94,7 +96,7 @@ export function CommandCenter({
 
       {shown ? (
         <Card
-          title={live ? 'Open incident' : 'Most recent incident'}
+          title={live ? 'Revenue at risk now' : 'Most recent recovery'}
           right={<button className="btn sm" onClick={() => onOpen(shown.incident_id)}>Open the full story</button>}
         >
           <div className="glance">
@@ -111,7 +113,7 @@ export function CommandCenter({
               </p>
               {matches && incident.proposal ? (
                 <p className="glance-do">
-                  <span>Agent recommends</span> {readableAction(incident.proposal.action)}
+                  <span>Recommended recovery</span> {readableAction(incident.proposal.action)}
                   {incident.proposal.parameters?.percentage != null
                     ? ` ${incident.proposal.parameters.percentage}%`
                     : ''}
@@ -148,10 +150,10 @@ export function CommandCenter({
         <Card>
           <div className="idle-cta">
             <div>
-              <b>Nothing is broken right now.</b>
+              <b>No revenue at risk right now.</b>
               <span>
-                Break something and watch the agent detect it, price it in rupees, choose the
-                safest way out, prove whether it worked, and remember the answer.
+                Break something and watch the agent detect it, price the revenue at risk, choose
+                the safest recovery, prove whether it actually worked, and remember the answer.
               </span>
             </div>
             <div style={{ display: 'flex', gap: 9 }}>
@@ -169,10 +171,10 @@ export function CommandCenter({
       )}
 
       <div className="grid-2">
-        <Card title="Payment health" right={<button className="btn sm" onClick={() => onGoto('health')}>Details</button>}>
+        <Card title="Payment health impacting revenue" right={<button className="btn sm" onClick={() => onGoto('health')}>Details</button>}>
           <HealthChips groups={[['Methods', health?.payment_method], ['Providers', health?.psp]]} />
         </Card>
-        <Card title="What it would prevent next" right={<button className="btn sm" onClick={() => onGoto('learning')}>Learning</button>}>
+        <Card title="Prevention opportunity" right={<button className="btn sm" onClick={() => onGoto('learning')}>Learning</button>}>
           {prevention.length ? (
             <>
               <p className="glance-why">{prevention[0].pattern}</p>
@@ -241,8 +243,8 @@ export function Incidents({
   if (!incidents?.length) {
     return (
       <>
-        <div className="page-head"><div><h1>Incidents</h1><p>Every incident the agent has worked, told as one story each.</p></div></div>
-        <Card><Empty title="No incidents yet" body="Run something from Simulate and the agent will work it end to end here." facts={[{ label: 'Detector running', tone: 'ok', live: true }]} /></Card>
+        <div className="page-head"><div><h1>Revenue recovery incidents</h1><p>Every incident the agent has worked, told as one recovery story each.</p></div></div>
+        <Card><Empty title="No incidents yet" body="Run something from Simulate and the agent will detect it, recover it and verify the result here." facts={[{ label: 'Detector running', tone: 'ok', live: true }]} /></Card>
       </>
     )
   }
@@ -252,7 +254,10 @@ export function Incidents({
   return (
     <>
       <div className="page-head">
-        <div><h1>Incidents</h1><p>{incidents.length} recorded · newest first</p></div>
+        <div>
+          <h1>Revenue recovery incidents</h1>
+          <p>{incidents.length} recorded · newest first · revenue at risk shown per incident</p>
+        </div>
       </div>
 
       {/* The list stays a list. One incident is open at a time, because the story below is long
@@ -297,7 +302,7 @@ export function Incidents({
       ) : (
         <Card>
           <div className="empty" style={{ padding: '30px 20px' }}>
-            <p>Select an incident above to read its story, from revenue at risk to what the agent learned.</p>
+            <p>Select an incident above to follow the recovery, from revenue at risk to verified revenue recovered.</p>
           </div>
         </Card>
       )}
@@ -311,7 +316,13 @@ export function Health({ health, metrics, series }) {
   return (
     <>
       <div className="page-head">
-        <div><h1>Payment Health</h1><p>Live success rate by payment method, provider and issuing bank, each measured against its own baseline.</p></div>
+        <div>
+          <h1>Payment health impacting revenue</h1>
+          <p>
+            Live success rate by payment method, provider and issuing bank, each against its own
+            baseline. This is where revenue starts leaking before an incident opens.
+          </p>
+        </div>
         <span className="pill mono">{health?.window_minutes ?? 5} min window</span>
       </div>
       <Card title="Payment success rate" sub={metrics ? `${metrics.transactions} payments in window` : ''}>
@@ -328,12 +339,15 @@ export function Health({ health, metrics, series }) {
 
 /* =============================================================== learning */
 
-/** What the system has learned, as a playbook a payments engineer could argue with.
+/** The learned recovery playbooks — how the system gets better at recovering revenue.
  *
  *  This is the between-incidents view. `store.py` answers what an agent asks mid-incident; this
- *  answers what a person asks afterwards - what do you now believe, on what evidence, and what
- *  would you avoid? It is read-only: the strategy layer queries memory directly, so nothing on
+ *  answers what a person asks afterwards - which recoveries actually work here, on what evidence,
+ *  and which to avoid? It is read-only: the strategy layer queries memory directly, so nothing on
  *  this page sits on the path from a proposal to an execution.
+ *
+ *  It is historical evidence used to improve future recovery recommendations, not generic AI
+ *  memory: every row is a count over recorded outcomes.
  */
 export function Learning({ learning, busy, onDecide, onSeed }) {
   const records = learning?.records || []
@@ -347,11 +361,12 @@ export function Learning({ learning, busy, onDecide, onSeed }) {
     <>
       <div className="page-head">
         <div>
-          <h1>What the agent has learned</h1>
+          <h1>Learned recovery playbooks</h1>
           <p>
-            Every incident that closes is priced, reduced to a structured record and stored —
-            including the ones that went badly. Those records are what the next incident is decided
-            against, and what the playbook below is derived from.
+            <b>The system gets better at recovering revenue after every incident.</b> Each one that
+            closes is priced, reduced to a structured record and stored — including the ones that
+            went badly. Those records are the historical evidence the next recovery is weighed
+            against, and what the playbooks below are derived from.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 9, alignItems: 'center' }}>
@@ -375,7 +390,7 @@ export function Learning({ learning, busy, onDecide, onSeed }) {
         <div className="exec">
           <ExecCard k="Patterns discovered" v={playbook.length} hint="distinct failure signatures" />
           <ExecCard
-            k="Interventions that worked"
+            k="Recoveries that worked"
             v={(outcomes.actions || []).reduce((n, a) => n + a.helped, 0)}
             hint={`of ${(outcomes.actions || []).reduce((n, a) => n + a.attempts, 0)} executed`}
             tone="ok"
@@ -387,7 +402,7 @@ export function Learning({ learning, busy, onDecide, onSeed }) {
             tone={outcomes.rollbacks ? 'warn' : ''}
           />
           <ExecCard
-            k="Revenue protected"
+            k="Revenue protected by learned strategies"
             v={formatINR((outcomes.revenue_protected_paise || 0) + (outcomes.revenue_recovered_paise || 0))}
             hint={`of ${formatINR(outcomes.revenue_at_risk_paise)} at risk`}
           />
@@ -406,7 +421,7 @@ export function Learning({ learning, busy, onDecide, onSeed }) {
 
       {playbook.length ? (
         <>
-          <h2 className="section-h">Learned playbook</h2>
+          <h2 className="section-h">Learned recovery playbook</h2>
           {playbook.map((e) => <PlaybookEntry key={e.signature_key} entry={e} />)}
         </>
       ) : (
@@ -420,10 +435,10 @@ export function Learning({ learning, busy, onDecide, onSeed }) {
 
       {(learning?.by_payment_method?.length || learning?.by_provider?.length) ? (
         <div className="grid-2">
-          <Card title="Most effective action, by payment method">
+          <Card title="Most effective recovery, by payment method">
             <Effectiveness rows={learning.by_payment_method} keyField="payment_method" />
           </Card>
-          <Card title="Most effective action, by provider">
+          <Card title="Most effective recovery, by provider">
             <Effectiveness rows={learning.by_provider} keyField="psp" />
           </Card>
         </div>
@@ -431,7 +446,7 @@ export function Learning({ learning, busy, onDecide, onSeed }) {
 
       {influenced.length ? (
         <Card
-          title="Incidents decided with history on the record"
+          title="Recoveries decided with history on the record"
           sub={`${influenced.length} of ${records.length}`}
         >
           <div className="rows">
@@ -461,9 +476,9 @@ export function Learning({ learning, busy, onDecide, onSeed }) {
         </Card>
       ) : null}
 
-      <h2 className="section-h">Prevention</h2>
+      <h2 className="section-h">Prevention opportunities</h2>
       <p className="section-p">
-        Patterns that have repeated often enough to be worth stopping rather than handling. These
+        Patterns that have repeated often enough to be worth stopping rather than recovering. These
         are documents: approving one records the request, and merchant policy is only ever changed
         by a person editing the policy file.
       </p>
@@ -482,7 +497,7 @@ export function Learning({ learning, busy, onDecide, onSeed }) {
         </Card>
       )}
 
-      <Card title="Incident memory" sub="newest first">
+      <Card title="Recovery history" sub="newest first">
         <MemoryTable records={records} />
       </Card>
     </>
@@ -591,7 +606,7 @@ export function Proof({ report, agents }) {
     <>
       <div className="page-head">
         <div>
-          <h1>How it works</h1>
+          <h1>How the recovery works</h1>
           <p>
 Ten agents with one responsibility each, and a reproducible benchmark that measures
             them — including whether remembering past incidents actually changes the next decision,

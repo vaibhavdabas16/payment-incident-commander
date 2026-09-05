@@ -311,8 +311,8 @@ export default function App() {
         >
           <Mark size={24} />
           <span className="side-name">
-            <b>Incident Commander</b>
-            <span>AI payment operations</span>
+            <b>Payment Incident Commander</b>
+            <span>Autonomous payment recovery</span>
           </span>
         </button>
 

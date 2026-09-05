@@ -144,8 +144,8 @@ function Recommendation({ incident, trace, busy, awaiting, onApprove, onReject }
   const plan = incident.recovery_plan
   if (!p) {
     return (
-      <Card title="Agent recommendation">
-        <p className="muted">The agents have not finished choosing an action yet.</p>
+      <Card title="Recommended recovery">
+        <p className="muted">The agent has not finished choosing a recovery yet.</p>
       </Card>
     )
   }
@@ -160,15 +160,16 @@ function Recommendation({ incident, trace, busy, awaiting, onApprove, onReject }
   return (
     <section className="rec-panel">
       <header className="rec-head">
-        <span className="rec-eyebrow">Agent recommendation</span>
+        <span className="rec-eyebrow">Recommended recovery</span>
         {executed ? <Tag tone="ok">executed</Tag> : awaiting ? <Tag tone="warn">needs your approval</Tag> : null}
+        <span className="rec-guardrail">AI proposes · policy decides · the system verifies</span>
       </header>
 
       <h2 className="rec-action">{actionSentence(p, pd)}</h2>
 
       <div className="rec-figures">
         <div>
-          <span>Expected revenue protected</span>
+          <span>Expected revenue recovery</span>
           <b>{formatINR(p.expected_revenue_protected_per_hour_paise)}<i>/hour</i></b>
         </div>
         <div>
@@ -193,7 +194,7 @@ function Recommendation({ incident, trace, busy, awaiting, onApprove, onReject }
 
       <div className="rec-split">
         <div className="rec-col">
-          <h3>Why this action</h3>
+          <h3>Why this recovery</h3>
           <ul className="reasons">
             {whyBullets(incident, chosen, stats, support).map((b, i) => <li key={i}>{b}</li>)}
           </ul>
@@ -211,6 +212,10 @@ function Recommendation({ incident, trace, busy, awaiting, onApprove, onReject }
 
         <div className="rec-col guard">
           <h3>What happens if this is wrong</h3>
+          <p className="rec-guard-lead">
+            Autonomy within merchant-defined guardrails. If the recovery does not work, the system
+            rolls it back and escalates with the evidence.
+          </p>
           {exposure?.reached ? (
             <ul className="reasons">
               <li>{exposure.headline}</li>
@@ -303,7 +308,7 @@ function StrategyTable({ incident }) {
 
   return (
     <Card
-      title="Every option it considered"
+      title="Every recovery it considered"
       sub={`${rows.length} priced · selected highlighted`}
     >
       <div className="strat">
@@ -336,9 +341,11 @@ function StrategyTable({ incident }) {
         })}
       </div>
       <p className="wf-note" style={{ marginTop: 12 }}>
-        Expected value is revenue protected weighted by the probability the fix works, less what it
-        risks if it backfires. History adjusts that probability within a hard bound; it cannot
-        create an option, change a measured figure, or reach the policy gateway.
+        The objective is to <b>maximise recovered revenue within the merchant's risk limits</b> —
+        not to maximise success rate. Expected value is revenue recovered weighted by the
+        probability the recovery works, less what it risks if it backfires. History adjusts that
+        probability within a hard bound; it cannot create an option, change a measured figure, or
+        reach the policy gateway.
       </p>
     </Card>
   )
@@ -357,8 +364,10 @@ function VerificationPanel({ incident }) {
   if (!v) {
     if (!incident.action_result) return null
     return (
-      <Card title="Verification">
-        <p className="muted">Waiting on post-intervention traffic before judging the result.</p>
+      <Card title="Recovery verification">
+        <p className="muted">
+          Waiting on post-intervention traffic. Recovery is verified before it is counted.
+        </p>
       </Card>
     )
   }
@@ -372,7 +381,7 @@ function VerificationPanel({ incident }) {
   return (
     <section className={`verify ${verdict.tone}`}>
       <header className="verify-head">
-        <span className="verify-eyebrow">Did it actually work?</span>
+        <span className="verify-eyebrow">Was the revenue actually recovered?</span>
         <Tag tone={verdict.tone}>{verdict.label}</Tag>
       </header>
 
@@ -398,9 +407,10 @@ function VerificationPanel({ incident }) {
             </div>
           </div>
           <p className="verify-note">
-            The control group is traffic the agent deliberately did not move, living through the
-            same ramp and the same hour. Comparing against it is what stops the incident recovering
-            on its own from being mistaken for the fix working.
+            <b>We do not claim recovery just because payment success improved.</b> The control group
+            is traffic the agent deliberately did not move, living through the same ramp and the
+            same hour. Comparing against it is what stops the incident recovering on its own from
+            being mistaken for the recovery working — recovery is verified before it is counted.
           </p>
         </>
       ) : (
@@ -430,7 +440,7 @@ function VerificationPanel({ incident }) {
         <p>{v.explanation}</p>
         {v.estimated_revenue_protected_per_hour_paise ? (
           <div className="verify-money">
-            <span>Revenue protected</span>
+            <span>Revenue recovered</span>
             <b>{formatINR(v.estimated_revenue_protected_per_hour_paise)}<i>/hour</i></b>
           </div>
         ) : null}
@@ -460,7 +470,7 @@ function RevenueOutcome({ incident }) {
   if (!rev?.measurable) return null
 
   return (
-    <Card title="What happened financially" sub="every figure is arithmetic over recorded measurements">
+    <Card title="Revenue actually recovered" sub="every figure is arithmetic over recorded measurements">
       <RevenueBar revenue={rev} />
       <div className="facts" style={{ marginTop: 16 }}>
         <div className="fact"><span>At risk</span><b>{formatINR(rev.revenue_at_risk_paise)}</b></div>
@@ -493,7 +503,7 @@ function LearnedFromThis({ incident, onGoto }) {
   const stats = support?.stats
 
   return (
-    <Card title="What the agent learned" sub="written to memory when the incident closed">
+    <Card title="What the agent learned" sub="historical evidence for the next recovery">
       <div className="learn">
         <div className="learn-row">
           <span className="learn-k">Recorded</span>
@@ -517,8 +527,8 @@ function LearnedFromThis({ incident, onGoto }) {
           </div>
         ) : null}
         <p className="learn-forward">
-          This will influence future recovery recommendations: it moves the efficacy prior behind
-          every option of this kind, inside a hard bound. It cannot authorise anything — the policy
+          This improves future recovery recommendations: it moves the efficacy prior behind every
+          option of this kind, inside a hard bound. It cannot authorise anything — the policy
           gateway decides what may run, and history is evidence rather than authority.
         </p>
         {onGoto ? (
@@ -581,7 +591,7 @@ function AgentTraceSection({ incident, trace, agents }) {
   return (
     <section className="tracewrap">
       <button className="tracewrap-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
-        <span className="tracewrap-title">Agent trace</span>
+        <span className="tracewrap-title">Agent trace — the technical proof</span>
         <span className="tracewrap-sum">
           {stages.length ? `${done} of ${stages.length} stages reached` : 'loading'}
         </span>
