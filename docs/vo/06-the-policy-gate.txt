@@ -1,5 +1,0 @@
-Every action passes a deterministic policy gateway. Plain Python, evaluating the merchant's own configuration file. No model anywhere in that path.
-
-Here it clamps the traffic shift down to what merchant policy allows, and holds it for a human, because confidence sits below the merchant's autonomous floor.
-
-AI proposes. Policy decides. The system verifies.

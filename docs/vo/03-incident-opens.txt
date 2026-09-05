@@ -1,5 +1,0 @@
-I have just degraded a UPI provider. Nothing here is scripted. The same detector, agents and policy gateway run whether I am watching or the benchmark is.
-
-Detection needs three independent statistical tests to agree before it opens an incident, so it will not react to one noisy window.
-
-And there it is. The first thing the page reports is not a stack trace. It is the merchant revenue at risk, per hour, priced from this merchant's own traffic.

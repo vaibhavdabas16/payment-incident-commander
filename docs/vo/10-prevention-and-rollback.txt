@@ -1,3 +1,0 @@
-The last step is prevention. This pattern has recurred often enough to be worth stopping rather than recovering, so the system proposes preventing it. That is a recommendation, not an action.
-
-There is also a scenario where every UPI provider fails at once, so the obvious reroute cannot possibly work. The agent tries it, measures no improvement against the control, reverts its own change, and escalates with the evidence.

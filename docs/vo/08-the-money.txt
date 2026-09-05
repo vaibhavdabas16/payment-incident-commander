@@ -1,3 +1,0 @@
-So the ledger closes. Revenue at risk. Revenue protected. Revenue recovered from payments that had already failed. And the remainder, lost.
-
-Those figures are disjoint by construction. They sum to the exposure exactly. The benchmark asserts that identity on every single incident, because a system reporting a hundred and thirty percent recovery rate has not had a good day. It has a bug.

@@ -1,5 +1,0 @@
-When the incident closes, the whole thing becomes one structured record.
-
-On the Learning page that becomes a playbook. For this failure signature the system now prefers a moderate traffic shift, and it says what to avoid. The larger shift helped in only two of five comparable incidents, and three of those had to be rolled back.
-
-To be straight with you, fourteen of these records are seeded demo history, and the interface labels them as seeded. But they match this failure on merit. Nothing was special cased.

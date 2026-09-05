@@ -1,3 +1,0 @@
-And unprompted, it tells me what happens if it is wrong. Only that share of traffic moves. The rest stays put, as a control group. If it does not help, it is undone automatically.
-
-It also shows every recovery it did not pick, and what each was worth. The objective is not to maximise success rate. It is to maximise recovered revenue inside the merchant's risk limits.

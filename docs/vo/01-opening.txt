@@ -1,5 +1,0 @@
-Payment Incident Commander is an autonomous payment recovery and revenue protection agent.
-
-When payments start failing, most tools tell you that something is wrong. The harder problem is everything after. Which of five providers is at fault. How much money is walking out of the door. What to do about it that will not make things worse. And whether the thing you did actually worked.
-
-The goal is not to manage the incident. It is to recover the revenue.

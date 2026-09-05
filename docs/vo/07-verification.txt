@@ -1,7 +1,0 @@
-This is the part I would point at first.
-
-We do not claim recovery just because payment success improved. When the agent moved that traffic, it deliberately left the rest alone. So there is a control group living through the same outage, the same hour, the same customers.
-
-The gap between those two numbers is the intervention. Not the incident recovering on its own.
-
-That distinction matters, because those two situations call for opposite responses. Without a control group, a fix applied during a worsening outage looks like it caused the damage, and the system rolls back something that was working.
