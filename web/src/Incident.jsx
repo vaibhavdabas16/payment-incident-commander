@@ -257,6 +257,16 @@ function whyBullets(incident, chosen, stats, support) {
 
   if (rc) out.push(`${rc.most_likely_root_cause}, at ${Math.round(rc.confidence * 100)}% confidence.`)
   if (chosen?.reasoning) out.push(chosen.reasoning)
+  // The option was priced at one size and policy may have granted another. The headline shows what
+  // will actually run; the sentence above describes the option as priced, and without this the two
+  // read as a contradiction rather than as a clamp.
+  const granted = pd?.granted_parameters?.percentage
+  if (granted != null && chosen?.magnitude != null && Math.abs(granted - chosen.magnitude) > 1e-6) {
+    out.push(
+      `That option was priced at ${chosen.magnitude}%. Merchant policy granted ${granted}%, which is ` +
+      `what runs — the expected value above is for the option as priced.`,
+    )
+  }
   if (im) {
     out.push(
       `${formatINR(im.revenue_at_risk_per_hour_paise)} an hour is at risk, from about ` +

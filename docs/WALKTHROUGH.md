@@ -4,6 +4,9 @@ The other documents describe the system by part. [ARCHITECTURE](ARCHITECTURE.md)
 map, [DECISIONS](DECISIONS.md) is why each part is shaped the way it is, [EVALUATION](EVALUATION.md)
 is how well it works and [INTEGRATION](INTEGRATION.md) is how to point it at a real merchant.
 
+[PROJECT_MAP](PROJECT_MAP.md) is the index of which file does what, with the dashboard
+annotated screen by screen.
+
 This one is the trace. It follows a single payment failure from the moment it enters the system to
 the moment a person is handed something to do about it, naming the file and function at every step,
 so you can read the code in the order it actually runs rather than in the order it is filed.

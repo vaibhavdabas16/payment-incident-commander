@@ -18,6 +18,7 @@ OBSERVE → UNDERSTAND → INTERVENE → MEASURE → LEARN → PREVENT → OBSER
 &nbsp;·&nbsp; [Decisions and trade-offs](docs/DECISIONS.md)
 &nbsp;·&nbsp; [Demo guide](docs/DEMO.md)
 &nbsp;·&nbsp; [Integration](docs/INTEGRATION.md)
+&nbsp;·&nbsp; [**Project map**](docs/PROJECT_MAP.md) — every file, every screen, what produces what
 
 ![The incident workflow, stage by stage](docs/images/incident-workflow.png)
 
@@ -578,10 +579,13 @@ web/                  React dashboard (Vite). Incident.jsx is the incident story
 examples/             forward your payments in, receive actions out
 tests/                146 tests: safety invariants, detection quality, end-to-end
                       lifecycles, integration, and the closed loop
-docs/                 ARCHITECTURE · DECISIONS · EVALUATION · INTEGRATION · DEMO · WALKTHROUGH
+docs/                 PROJECT_MAP · ARCHITECTURE · DECISIONS · EVALUATION
+                      INTEGRATION · DEMO · WALKTHROUGH
 ```
 
 Reading order, if you want to understand it rather than run it:
+[docs/PROJECT_MAP.md](docs/PROJECT_MAP.md) indexes every subsystem, every file and every screen —
+including annotated screenshots of the running dashboard and what produces each region. Then
 [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) follows one payment failure from ingestion to what a
 human is handed, naming the file and function at every step.
 

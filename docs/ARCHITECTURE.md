@@ -5,7 +5,7 @@
 > guardrails, experimentally verifies whether revenue was actually recovered, learns from the
 > outcome, and uses that knowledge to recover better next time and to argue for prevention.
 
-Everything in `pic/` implements what is specified here.
+Everything in `pic/` implements what is specified here. For the index of which file does what — including the dashboard, screen by screen — see [PROJECT_MAP.md](PROJECT_MAP.md).
 
 The system is a **closed loop**:
 
