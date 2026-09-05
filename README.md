@@ -105,7 +105,9 @@ has to finish the job something better than a paragraph of advice is the hard pa
 
 ---
 
-## What you see on screen
+## Every surface, at a glance
+
+Screenshots of each are in [What it looks like](#what-it-looks-like) below.
 
 | Surface | What it answers |
 |---|---|
@@ -124,10 +126,179 @@ policy rule the gateway evaluated.
 
 ---
 
-## Run it yourself
+## Quick start, step by step
+
+Five minutes from clone to a running incident. Nothing here needs an API key.
+
+### 1. Install
 
 ```bash
+git clone https://github.com/vaibhavdabas16/payment-incident-commander
+cd payment-incident-commander
 pip install -r requirements.txt
+```
+
+### 2. See it work without a browser
+
+```bash
+python -m pic.demo
+```
+
+Two acts in the terminal: three live incidents, then the closed loop over a shared memory. This is
+the fastest way to confirm the whole thing works, and it drives the same supervisor, agents, tools
+and policy gateway as everything else.
+
+### 3. Build the dashboard
+
+```bash
+cd web
+npm install
+npm run build
+cd ..
+```
+
+### 4. Start the server
+
+**macOS / Linux**
+
+```bash
+PIC_LLM_PROVIDER=deterministic uvicorn pic.api.main:app --port 8000
+```
+
+**Windows PowerShell** — no `&&`, and no inline environment prefix, so these are separate lines:
+
+```powershell
+$env:PIC_LLM_PROVIDER = "deterministic"
+python -m uvicorn pic.api.main:app --port 8000
+```
+
+Wait for `Application startup complete.` If you instead see `[Errno 10048]` or `Address already in
+use`, something else already holds port 8000 — stop it, or pass `--port 8001`.
+
+### 5. Open it
+
+```
+http://127.0.0.1:8000/?session=demo
+```
+
+The `?session=demo` is worth understanding: **every browser gets its own isolated world**, keyed by
+that id. Pinning it means any `curl` you run below talks to the world you are actually looking at.
+Without it, you change a world nobody is watching and the screen never moves.
+
+![The landing page](docs/images/ui-landing.png)
+
+### 6. Load the seeded history
+
+**Overview → Load demo history.** This writes fourteen labelled historical records so the learning
+and playbook screens have something to have learned from.
+
+They are marked `seeded` everywhere they appear. They describe the same failure the scenario in the
+next step produces, so a live incident retrieves them on merit — but they were not measured in your
+session, and the interface never pretends otherwise.
+
+![The overview](docs/images/ui-overview.png)
+
+### 7. Break something
+
+**Simulate → *UPI PSP route degradation*.**
+
+![The simulate page](docs/images/ui-simulate.png)
+
+Detection needs about two minutes of real traffic, because three independent statistical tests must
+agree before an incident opens. To move the clock along:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/control/speed?speedup=4&session=demo"
+```
+
+> **One scenario at a time.** Running several at once creates overlapping degradations, and once
+> several causes are live no single one is separable — root-cause confidence collapses and the agent
+> correctly refuses to act. That is honest behaviour and a confusing first impression. **Simulate →
+> Reset** returns you to a clean world.
+
+### 8. Watch it work
+
+The incident page is one long scroll, in this order:
+
+| Section | What it answers |
+|---|---|
+| **Hero** | How much revenue is at risk, right now |
+| **Recommended recovery** | What it wants to do, what that is worth, and what history says |
+| **Every recovery it considered** | The options it rejected, and what each was worth |
+| **Was the revenue actually recovered?** | Treated traffic vs an untouched control group |
+| **Revenue actually recovered** | At risk, protected, recovered, lost — which sum exactly |
+| **What the agent learned** | The record written to memory |
+| **Prevention opportunity** | Advisory only; merchant policy is unchanged |
+| **Agent trace** | Every stage, every tool call, every policy rule evaluated |
+
+If policy asks for approval, approve it. That gate is real: the Action Agent cannot invoke a write
+tool without a policy decision naming that exact action.
+
+---
+
+## What it looks like
+
+### One incident, told as one story
+
+![The incident story](docs/images/ui-incident-story.png)
+
+**The exposure, priced.** Not a stack trace — how much money is leaving, per hour, computed from
+this merchant's own traffic by payment method and order-value band.
+
+![The incident hero](docs/images/ui-region-hero.png)
+
+**The recommendation, with its evidence.** What it will do, what it expects that to be worth, what
+it is risking, and how the same action has performed on comparable incidents before.
+
+![The recommendation](docs/images/ui-region-recommendation.png)
+
+**Everything it did not pick.** Rejected options are shown with their prices, because a
+recommendation you cannot argue with is not a recommendation.
+
+![The strategy table](docs/images/ui-region-strategies.png)
+
+**The proof.** The agent deliberately left part of the traffic alone, so there is a control group
+living through the same outage, the same hour, the same customers. The gap between them is the
+intervention — not the incident recovering on its own.
+
+![Verification against a control group](docs/images/ui-region-verification.png)
+
+**The money, three ways.** At risk, protected, recovered and lost are disjoint by construction and
+sum to the exposure exactly. The benchmark asserts that identity on every incident.
+
+![The revenue ledger](docs/images/ui-region-revenue.png)
+
+**What it learned.** One structured record, written when the incident closed — including when it
+went badly.
+
+![What the agent learned](docs/images/ui-region-learning.png)
+
+### The learned playbook
+
+Between incidents: what actually works here, on what evidence, and what to avoid. Read-only — the
+strategy layer queries memory directly, so nothing on this page sits between a proposal and an
+execution.
+
+![The learning page](docs/images/ui-learning.png)
+
+### Payment health
+
+Live success rate per method, provider and issuing bank, each against its own baseline. This is
+where revenue starts leaking before an incident opens.
+
+![Payment health](docs/images/ui-health.png)
+
+### How it works, and how well
+
+The pipeline, and the benchmark that measures it.
+
+![The proof page](docs/images/ui-proof.png)
+
+---
+
+## Run the rest of it
+
+```bash
 python -m pic.demo            # both acts, no build step
 python -m pic.demo --loop     # act two only: four incidents, one memory, ~40s
 ```
