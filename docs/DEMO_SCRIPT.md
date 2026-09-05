@@ -52,10 +52,11 @@ sections always come in this order, top to bottom:
 | 1 | **Hero** | Big title, incident ID top right, one huge rupee figure |
 | 2 | **Recommended recovery** | The recommendation in a sentence, four stats under it |
 | 3 | **Every recovery it considered** | A table, selected row highlighted |
-| 4 | **Recovery verification** | Two coloured blocks side by side |
+| 4 | **"Was the revenue actually recovered?"** | Three columns: Control, the gap, Treatment |
 | 5 | **Revenue actually recovered** | Five figures in a row |
 | 6 | **What the agent learned** | |
 | 7 | **Prevention opportunity** | Only if the pattern has recurred |
+|   |   | *Sections 4 and 5 exist only after the agent has acted and measured. On an incident still awaiting approval, they are genuinely not there.* |
 | 8 | **Handed to a human** | Only if it escalated |
 | 9 | **Agent trace** | The long technical log. Skip it on camera |
 
@@ -67,8 +68,8 @@ sections always come in this order, top to bottom:
 | `[confidence]` | Recommended recovery, 2nd stat | **"Confidence in the cause"** |
 | `[the percentage]` | Recommended recovery, the sentence in large type | e.g. "Shift 15% of UPI traffic…" |
 | `[history line]` | Recommended recovery, 4th stat | **"Historical success"** |
-| `[control %]` | Recovery verification, **left** block | **"Control"** — the big % |
-| `[treatment %]` | Recovery verification, **right** block | **"Treated"** — the big % |
+| `[control %]` | Verification, **far left** column | **"Control · left alone"** — the big % |
+| `[treatment %]` | Verification, **far right** column | **"Treatment · moved"** — the big % |
 | `[at risk / protected / recovered]` | Revenue actually recovered | Labelled **At risk · Protected · Recovered · Lost · Recovery rate** |
 
 Two things worth knowing so you don't stumble:
@@ -76,8 +77,13 @@ Two things worth knowing so you don't stumble:
 - The **hero** also carries small stats (Recovered, Protected, Recovery, Duration, Payments
   rescued). Those are the same figures as section 5. Read them from section 5 — it's the clearer
   shot.
-- Between the two verification blocks is the gap in **percentage points** and the **p-value**.
-  That's the "at that p-value" line if you want it, but you can skip it.
+- The verification panel is headed **"Was the revenue actually recovered?"** once it has numbers.
+  It only says "Recovery verification" while it is still waiting, so if you see that, the result is
+  not in yet.
+- The **middle** column between Control and Treatment holds the gap in **percentage points** and
+  the **p-value**. Say it if you want the "at that p-value" line; skip it otherwise.
+- Directly under those three columns is the sentence **"We do not claim recovery just because
+  payment success improved."** That is your 2:45 line printed on screen. Read it off.
 
 ### Sidebar navigation
 
