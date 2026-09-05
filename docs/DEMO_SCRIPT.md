@@ -42,6 +42,55 @@ Then, before you hit record:
 
 ---
 
+## Where everything is
+
+**The incident page is one long scroll.** You never navigate inside it — you only scroll down. The
+sections always come in this order, top to bottom:
+
+| # | Section | How you recognise it |
+|---|---|---|
+| 1 | **Hero** | Big title, incident ID top right, one huge rupee figure |
+| 2 | **Recommended recovery** | The recommendation in a sentence, four stats under it |
+| 3 | **Every recovery it considered** | A table, selected row highlighted |
+| 4 | **Recovery verification** | Two coloured blocks side by side |
+| 5 | **Revenue actually recovered** | Five figures in a row |
+| 6 | **What the agent learned** | |
+| 7 | **Prevention opportunity** | Only if the pattern has recurred |
+| 8 | **Handed to a human** | Only if it escalated |
+| 9 | **Agent trace** | The long technical log. Skip it on camera |
+
+### The exact numbers the script asks you to read
+
+| Script says | Where it is | Exact label on screen |
+|---|---|---|
+| `[revenue at risk]` | Hero, the big number | **"Revenue at risk, this incident"** |
+| `[confidence]` | Recommended recovery, 2nd stat | **"Confidence in the cause"** |
+| `[the percentage]` | Recommended recovery, the sentence in large type | e.g. "Shift 15% of UPI traffic…" |
+| `[history line]` | Recommended recovery, 4th stat | **"Historical success"** |
+| `[control %]` | Recovery verification, **left** block | **"Control"** — the big % |
+| `[treatment %]` | Recovery verification, **right** block | **"Treated"** — the big % |
+| `[at risk / protected / recovered]` | Revenue actually recovered | Labelled **At risk · Protected · Recovered · Lost · Recovery rate** |
+
+Two things worth knowing so you don't stumble:
+
+- The **hero** also carries small stats (Recovered, Protected, Recovery, Duration, Payments
+  rescued). Those are the same figures as section 5. Read them from section 5 — it's the clearer
+  shot.
+- Between the two verification blocks is the gap in **percentage points** and the **p-value**.
+  That's the "at that p-value" line if you want it, but you can skip it.
+
+### Sidebar navigation
+
+Only three sidebar items appear in this script:
+
+- **Simulate** — to start the scenario (and **Reset** between takes)
+- **Incidents** — where the incident opens; click the row to open the page above
+- **Learning** — the playbook, at **"Learned recovery playbook"**, then scroll to
+  **"Prevention opportunities"**
+- **How it works** — the closing benchmark numbers
+
+---
+
 ## The script
 
 ### 0:00 · Landing page, top
