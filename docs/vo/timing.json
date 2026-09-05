@@ -1,0 +1,79 @@
+[
+  {
+    "clip": "01",
+    "title": "Opening",
+    "starts_at_s": 0.0,
+    "budget_s": 32,
+    "actual_s": 32.0
+  },
+  {
+    "clip": "02",
+    "title": "The loop",
+    "starts_at_s": 32.0,
+    "budget_s": 10,
+    "actual_s": 10.0
+  },
+  {
+    "clip": "03",
+    "title": "Incident opens",
+    "starts_at_s": 42.0,
+    "budget_s": 32,
+    "actual_s": 32.0
+  },
+  {
+    "clip": "04",
+    "title": "Diagnosis and recommendation",
+    "starts_at_s": 74.0,
+    "budget_s": 36,
+    "actual_s": 36.0
+  },
+  {
+    "clip": "05",
+    "title": "Exposure and options",
+    "starts_at_s": 110.0,
+    "budget_s": 27,
+    "actual_s": 27.0
+  },
+  {
+    "clip": "06",
+    "title": "The policy gate",
+    "starts_at_s": 137.0,
+    "budget_s": 22,
+    "actual_s": 22.0
+  },
+  {
+    "clip": "07",
+    "title": "Verification",
+    "starts_at_s": 159.0,
+    "budget_s": 40,
+    "actual_s": 40.0
+  },
+  {
+    "clip": "08",
+    "title": "The money",
+    "starts_at_s": 199.0,
+    "budget_s": 25,
+    "actual_s": 25.0
+  },
+  {
+    "clip": "09",
+    "title": "Learning",
+    "starts_at_s": 224.0,
+    "budget_s": 35,
+    "actual_s": 35.0
+  },
+  {
+    "clip": "10",
+    "title": "Prevention and rollback",
+    "starts_at_s": 259.1,
+    "budget_s": 28,
+    "actual_s": 28.0
+  },
+  {
+    "clip": "11",
+    "title": "Benchmark and close",
+    "starts_at_s": 287.1,
+    "budget_s": 29,
+    "actual_s": 29.0
+  }
+]
